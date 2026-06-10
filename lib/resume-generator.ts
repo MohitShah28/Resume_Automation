@@ -235,7 +235,7 @@ function inferJobTitle(jobDescription: string) {
     if (match?.[0]) return match[0].trim()
   }
 
-  return ""
+  return "Target Role"
 }
 
 function inferCompany(jobDescription: string) {
@@ -292,11 +292,7 @@ function buildImprovedSummary(profile: ProfileData, jobTitle: string, keywords: 
     return `Software developer and data-focused builder with experience in Python, JavaScript, TypeScript, automation, and AI-driven applications. Strong foundation in analytics, dashboards, workflow tooling, and full-cycle project execution, with interest in building product features, internal tools, and LLM-powered systems for practical business use cases.${focus ? ` Relevant focus areas include ${focus}.` : ""} Known for translating ambiguous requirements into usable technical solutions, improving processes through automation, and presenting clear outputs for technical and non-technical stakeholders.`
   }
 
-  if (jobTitle) {
-    return `${profile.personalInfo.summary} Tailored for ${jobTitle} roles${focus ? ` with emphasis on ${focus}` : ""}. Brings hands-on experience across data cleaning, dashboards, automation, project delivery, and stakeholder-focused problem solving.`
-  }
-
-  return `${profile.personalInfo.summary} Brings hands-on experience across data cleaning, dashboards, automation, project delivery, and stakeholder-focused problem solving.`
+  return `${profile.personalInfo.summary} Tailored for ${jobTitle} roles${focus ? ` with emphasis on ${focus}` : ""}. Brings hands-on experience across data cleaning, dashboards, automation, project delivery, and stakeholder-focused problem solving, with a strong ability to turn complex requirements into practical, measurable outputs.`
 }
 
 function tailorProjectHighlights(project: ProfileData["projects"][number], keywords: string[]) {

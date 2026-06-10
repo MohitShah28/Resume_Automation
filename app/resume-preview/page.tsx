@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import { motion } from "framer-motion"
 import {
   Download,
@@ -70,73 +70,6 @@ const templateStyles = {
 
 type TemplateId = keyof typeof templateStyles
 type ResumeProject = GeneratedResume["selectedProjects"][number]
-type ResumeExperience = GeneratedResume["selectedExperience"][number]
-
-const fallbackTemplateId: TemplateId = "modern"
-const genericProjectBullets = [
-  "designed reusable workflows with clear inputs outputs validation steps and documentation for end users",
-  "improved project usability by organizing results into practical dashboards reports or repeatable analysis flows",
-  "tested project outputs for accuracy consistency and readability before presenting results",
-  "organized project outputs into clear workflows dashboards or reports for practical review",
-]
-
-function getTemplateId(value: string | undefined): TemplateId {
-  return value && value in templateStyles ? (value as TemplateId) : fallbackTemplateId
-}
-
-function normalizeForCompare(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
-}
-
-function cleanupResumeText(value: string) {
-  return value
-    .replace(/\bComputrer\b/g, "Computer")
-    .replace(/\bTarget Role roles\b/gi, "")
-    .replace(/\bTarget Role\b/gi, "")
-    .replace(/\s+with emphasis on\s*\./gi, ".")
-    .replace(/\s{2,}/g, " ")
-    .trim()
-}
-
-function uniqueCleanStrings(values: string[]) {
-  const seen = new Set<string>()
-  const cleaned: string[] = []
-
-  for (const value of values) {
-    const text = cleanupResumeText(value)
-    const key = normalizeForCompare(text)
-    if (!text || seen.has(key)) continue
-    seen.add(key)
-    cleaned.push(text)
-  }
-
-  return cleaned
-}
-
-function cleanupSummary(value: string) {
-  const cleaned = cleanupResumeText(value)
-    .replace(/Tailored for\s+roles\.?/gi, "")
-    .replace(/Tailored for\s+\.\s*/gi, "")
-    .trim()
-  const sentences = cleaned.match(/[^.!?]+[.!?]+/g) || [cleaned]
-  const summary = sentences.slice(0, 3).join(" ").trim()
-
-  if (summary.length <= 430) return summary
-
-  const shortened = summary.slice(0, 430)
-  const lastSpace = shortened.lastIndexOf(" ")
-  return `${shortened.slice(0, lastSpace > 300 ? lastSpace : 430).trim()}.`
-}
-
-function cleanupExperience(experience: ResumeExperience[]) {
-  return experience.slice(0, 2).map((exp) => ({
-    ...exp,
-    position: cleanupResumeText(exp.position),
-    company: cleanupResumeText(exp.company),
-    location: cleanupResumeText(exp.location),
-    description: uniqueCleanStrings(exp.description).slice(0, 4),
-  }))
-}
 
 function sanitizeFilename(value: string) {
   return value.replace(/[^a-z0-9_-]+/gi, "_").replace(/^_+|_+$/g, "").toLowerCase()
@@ -564,10 +497,10 @@ function mergeProjectsForFullPage(projects: ResumeProject[], profileProjects: Re
   for (const project of profileProjects) {
     const alreadyAdded = merged.some((item) => item.id === project.id || item.name === project.name)
     if (!alreadyAdded) merged.push(project)
-    if (merged.length >= 2) break
+    if (merged.length >= 3) break
   }
 
-  return merged.slice(0, 2).map((project) => {
+  return merged.slice(0, 3).map((project) => {
     const profileProject = profileProjects.find((item) => item.id === project.id || item.name === project.name)
     const highlights = project.highlights?.length ? project.highlights : profileProject?.highlights || []
     const fallbackHighlights = [
@@ -580,32 +513,24 @@ function mergeProjectsForFullPage(projects: ResumeProject[], profileProjects: Re
     return {
       ...profileProject,
       ...project,
-      name: cleanupResumeText(project.name),
-      description: cleanupResumeText(project.description || profileProject?.description || ""),
-      technologies: uniqueCleanStrings(project.technologies?.length ? project.technologies : profileProject?.technologies || []).slice(0, 6),
-      highlights: uniqueCleanStrings([...highlights, ...fallbackHighlights])
-        .filter((highlight) => !genericProjectBullets.includes(normalizeForCompare(highlight)) || highlights.length <= 1)
-        .slice(0, 3),
+      technologies: project.technologies?.length ? project.technologies : profileProject?.technologies || [],
+      highlights: Array.from(new Set([...highlights, ...fallbackHighlights])).slice(0, 4),
     }
   })
 }
 
 function mergeAchievementsForFullPage(achievements: string[], profileAchievements: string[]) {
-  return uniqueCleanStrings([...achievements, ...profileAchievements]).slice(0, 3)
+  return Array.from(new Set([...achievements, ...profileAchievements])).slice(0, 5)
 }
 
 function buildDownloadText({
   generatedResume,
   tailoredSkills,
-  displaySummary,
-  displayExperience,
   displayProjects,
   displayAchievements,
 }: {
   generatedResume: GeneratedResume
   tailoredSkills: string[]
-  displaySummary: string
-  displayExperience: ResumeExperience[]
   displayProjects: ResumeProject[]
   displayAchievements: string[]
 }) {
@@ -617,13 +542,13 @@ function buildDownloadText({
     `${profile.personalInfo.linkedin} | ${profile.personalInfo.github} | ${profile.personalInfo.portfolio}`,
     "",
     "PROFESSIONAL SUMMARY",
-    displaySummary,
+    generatedResume.improvedSummary || generatedResume.summary,
     "",
     "TECHNICAL SKILLS",
     `Relevant Skills: ${tailoredSkills.join(", ")}`,
     "",
     "PROFESSIONAL EXPERIENCE",
-    ...displayExperience.flatMap((exp) => [
+    ...generatedResume.selectedExperience.flatMap((exp) => [
       `${exp.position} | ${exp.company}, ${exp.location} | ${exp.startDate} - ${exp.endDate}`,
       ...exp.description.map((bullet) => `- ${bullet}`),
       "",
@@ -636,7 +561,7 @@ function buildDownloadText({
     ]),
     "EDUCATION",
     ...profile.education.flatMap((edu) => [
-      `${cleanupResumeText(edu.degree)} in ${cleanupResumeText(edu.field)} | ${cleanupResumeText(edu.institution)} | ${edu.endDate}`,
+      `${edu.degree} in ${edu.field} | ${edu.institution} | ${edu.endDate}`,
       edu.gpa ? `GPA: ${edu.gpa}` : "",
     ]),
     "",
@@ -650,64 +575,44 @@ function buildDownloadText({
 }
 
 export default function ResumePreviewPage() {
-  const resumePrintRef = useRef<HTMLDivElement>(null)
   const [zoom, setZoom] = useState(100)
   const [generatedResume, setGeneratedResume] = useState<GeneratedResume>(fallbackResume)
-  const [selectedTemplateId, setSelectedTemplateId] = useState<TemplateId>(getTemplateId(fallbackResume.template))
 
   useEffect(() => {
     const savedResume = window.localStorage.getItem("generatedResume")
     if (!savedResume) return
 
     try {
-      const parsedResume = JSON.parse(savedResume) as GeneratedResume
-      setGeneratedResume(parsedResume)
-      setSelectedTemplateId(getTemplateId(parsedResume.template))
+      setGeneratedResume(JSON.parse(savedResume))
     } catch {
       window.localStorage.removeItem("generatedResume")
     }
   }, [])
 
   const profile = generatedResume.profile
-  const tailoredSkills = uniqueCleanStrings(
-    generatedResume.tailoredSkills?.length
-      ? generatedResume.tailoredSkills
-      : [
+  const tailoredSkills = generatedResume.tailoredSkills?.length
+    ? generatedResume.tailoredSkills
+    : [
         ...profile.skills.programming,
         ...profile.skills.dataAnalysis,
         ...profile.skills.visualization,
         ...profile.skills.cloud,
         ...profile.skills.tools,
       ]
-  ).slice(0, 12)
-  const resumeTemplate = templateStyles[selectedTemplateId]
-  const isCompact = selectedTemplateId === "compact"
-  const displaySummary = cleanupSummary(generatedResume.improvedSummary || generatedResume.summary)
-  const displayExperience = cleanupExperience(generatedResume.selectedExperience)
+  const templateId = (generatedResume.template in templateStyles ? generatedResume.template : "modern") as TemplateId
+  const resumeTemplate = templateStyles[templateId]
+  const isCompact = templateId === "compact"
   const displayProjects = mergeProjectsForFullPage(generatedResume.selectedProjects, profile.projects)
   const displayAchievements = mergeAchievementsForFullPage(generatedResume.selectedAchievements || [], profile.achievements || [])
-  const downloadText = buildDownloadText({ generatedResume, tailoredSkills, displaySummary, displayExperience, displayProjects, displayAchievements })
+  const downloadText = buildDownloadText({ generatedResume, tailoredSkills, displayProjects, displayAchievements })
   const fileBaseName = sanitizeFilename(`${profile.personalInfo.firstName}_${profile.personalInfo.lastName}_resume`) || "resume"
 
   const handleDownloadPDF = () => {
-    const resumeNode = resumePrintRef.current
-
-    if (!resumeNode || selectedTemplateId !== getTemplateId(generatedResume.template)) {
-      toast.error("Template mismatch detected. Please reopen the resume preview and try again.")
-      return
-    }
-
-    const previousTitle = document.title
-    document.title = fileBaseName
-    document.body.classList.add("printing-resume")
-    setZoom(100)
-
-    window.setTimeout(() => {
-      window.print()
-      document.body.classList.remove("printing-resume")
-      document.title = previousTitle
-      toast.success("Use Save as PDF in the print dialog")
-    }, 50)
+    downloadBlob(
+      createFormattedResumePdfBlob({ generatedResume, tailoredSkills, displayProjects, displayAchievements, templateId }),
+      `${fileBaseName}.pdf`
+    )
+    toast.success("PDF downloaded")
   }
 
   const handleDownloadDOCX = () => {
@@ -754,24 +659,23 @@ export default function ResumePreviewPage() {
 
               {/* Document */}
               <motion.div
-                ref={resumePrintRef}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5 }}
-                className="resume-print-root bg-white rounded-lg shadow-lg mx-auto overflow-auto"
+                className="bg-white rounded-lg shadow-lg mx-auto overflow-auto"
                 style={{
                   width: `${(8.5 * 96 * zoom) / 100}px`,
                   minHeight: `${(11 * 96 * zoom) / 100}px`,
                   maxWidth: "100%"
                 }}
               >
-                <div className={cn("resume-print-page px-7 py-6", resumeTemplate.body, isCompact && "px-6 py-5")} style={{ fontSize: `${(14 * zoom) / 100}px` }}>
+                <div className={cn("px-7 py-6", resumeTemplate.body, isCompact && "px-6 py-5")} style={{ fontSize: `${(14 * zoom) / 100}px` }}>
                   {/* Header */}
                   <div className={resumeTemplate.header}>
-                    <h1 className={cn("text-2xl", resumeTemplate.name, selectedTemplateId === "executive" && "uppercase")} style={{ fontSize: `${(24 * zoom) / 100}px` }}>
+                    <h1 className={cn("text-2xl", resumeTemplate.name, templateId === "executive" && "uppercase")} style={{ fontSize: `${(24 * zoom) / 100}px` }}>
                       {profile.personalInfo.firstName} {profile.personalInfo.lastName}
                     </h1>
-                    {selectedTemplateId === "executive" && <div className="w-20 h-px bg-gray-800 mx-auto my-2" />}
+                    {templateId === "executive" && <div className="w-20 h-px bg-gray-800 mx-auto my-2" />}
                     <p className={cn("mt-1", resumeTemplate.contact)} style={{ fontSize: `${(12 * zoom) / 100}px` }}>
                       {profile.personalInfo.email} | {profile.personalInfo.phone} | {profile.personalInfo.location}
                     </p>
@@ -786,7 +690,7 @@ export default function ResumePreviewPage() {
                       Professional Summary
                     </h2>
                     <p className="text-gray-700 leading-relaxed" style={{ fontSize: `${(12 * zoom) / 100}px` }}>
-                      {displaySummary}
+                      {generatedResume.improvedSummary || generatedResume.summary}
                     </p>
                   </div>
 
@@ -805,7 +709,7 @@ export default function ResumePreviewPage() {
                     <h2 className={cn("text-sm font-bold pb-1 mb-2", resumeTemplate.section)}>
                       Professional Experience
                     </h2>
-                    {displayExperience.map((exp) => (
+                    {generatedResume.selectedExperience.map((exp) => (
                       <div key={exp.id} className={isCompact ? "mb-2" : "mb-2.5"}>
                         <div className="flex justify-between items-baseline gap-4">
                           <h3 className={resumeTemplate.itemTitle}>{exp.position}</h3>
@@ -855,13 +759,13 @@ export default function ResumePreviewPage() {
                     {profile.education.map((edu) => (
                       <div key={edu.id} className="mb-2">
                         <div className="flex justify-between items-baseline gap-4">
-                          <h3 className={resumeTemplate.itemTitle}>{cleanupResumeText(edu.degree)} in {cleanupResumeText(edu.field)}</h3>
+                          <h3 className={resumeTemplate.itemTitle}>{edu.degree} in {edu.field}</h3>
                           <span className="text-gray-600 whitespace-nowrap" style={{ fontSize: `${(11 * zoom) / 100}px` }}>
                             {edu.endDate}
                           </span>
                         </div>
                         <p className="text-gray-700" style={{ fontSize: `${(12 * zoom) / 100}px` }}>
-                          {cleanupResumeText(edu.institution)} | GPA: {edu.gpa}
+                          {edu.institution} | GPA: {edu.gpa}
                         </p>
                       </div>
                     ))}
