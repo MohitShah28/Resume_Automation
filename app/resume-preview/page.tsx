@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { motion } from "framer-motion"
 import {
   Download,
@@ -70,6 +70,12 @@ const templateStyles = {
 
 type TemplateId = keyof typeof templateStyles
 type ResumeProject = GeneratedResume["selectedProjects"][number]
+
+const fallbackTemplateId: TemplateId = "modern"
+
+function getTemplateId(value: string | undefined): TemplateId {
+  return value && value in templateStyles ? (value as TemplateId) : fallbackTemplateId
+}
 
 function sanitizeFilename(value: string) {
   return value.replace(/[^a-z0-9_-]+/gi, "_").replace(/^_+|_+$/g, "").toLowerCase()
@@ -575,15 +581,19 @@ function buildDownloadText({
 }
 
 export default function ResumePreviewPage() {
+  const resumePrintRef = useRef<HTMLDivElement>(null)
   const [zoom, setZoom] = useState(100)
   const [generatedResume, setGeneratedResume] = useState<GeneratedResume>(fallbackResume)
+  const [selectedTemplateId, setSelectedTemplateId] = useState<TemplateId>(getTemplateId(fallbackResume.template))
 
   useEffect(() => {
     const savedResume = window.localStorage.getItem("generatedResume")
     if (!savedResume) return
 
     try {
-      setGeneratedResume(JSON.parse(savedResume))
+      const parsedResume = JSON.parse(savedResume) as GeneratedResume
+      setGeneratedResume(parsedResume)
+      setSelectedTemplateId(getTemplateId(parsedResume.template))
     } catch {
       window.localStorage.removeItem("generatedResume")
     }
@@ -599,20 +609,35 @@ export default function ResumePreviewPage() {
         ...profile.skills.cloud,
         ...profile.skills.tools,
       ]
-  const templateId = (generatedResume.template in templateStyles ? generatedResume.template : "modern") as TemplateId
-  const resumeTemplate = templateStyles[templateId]
-  const isCompact = templateId === "compact"
+  const resumeTemplate = templateStyles[selectedTemplateId]
+  const isCompact = selectedTemplateId === "compact"
   const displayProjects = mergeProjectsForFullPage(generatedResume.selectedProjects, profile.projects)
   const displayAchievements = mergeAchievementsForFullPage(generatedResume.selectedAchievements || [], profile.achievements || [])
   const downloadText = buildDownloadText({ generatedResume, tailoredSkills, displayProjects, displayAchievements })
   const fileBaseName = sanitizeFilename(`${profile.personalInfo.firstName}_${profile.personalInfo.lastName}_resume`) || "resume"
 
   const handleDownloadPDF = () => {
-    downloadBlob(
-      createFormattedResumePdfBlob({ generatedResume, tailoredSkills, displayProjects, displayAchievements, templateId }),
-      `${fileBaseName}.pdf`
-    )
-    toast.success("PDF downloaded")
+    const resumeNode = resumePrintRef.current
+    const resumeTemplateId = getTemplateId(generatedResume.template)
+
+    if (!resumeNode || selectedTemplateId !== resumeTemplateId) {
+      toast.error("Template mismatch detected. Please reopen the resume preview and try again.")
+      return
+    }
+
+    const previousTitle = document.title
+    document.title = fileBaseName
+    document.body.classList.add("printing-resume")
+    const previousZoom = zoom
+    setZoom(100)
+
+    window.setTimeout(() => {
+      window.print()
+      document.body.classList.remove("printing-resume")
+      document.title = previousTitle
+      setZoom(previousZoom)
+      toast.success("Choose Save as PDF in the print dialog")
+    }, 100)
   }
 
   const handleDownloadDOCX = () => {
@@ -659,23 +684,24 @@ export default function ResumePreviewPage() {
 
               {/* Document */}
               <motion.div
+                ref={resumePrintRef}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5 }}
-                className="bg-white rounded-lg shadow-lg mx-auto overflow-auto"
+                className="resume-print-root bg-white rounded-lg shadow-lg mx-auto overflow-auto"
                 style={{
                   width: `${(8.5 * 96 * zoom) / 100}px`,
                   minHeight: `${(11 * 96 * zoom) / 100}px`,
                   maxWidth: "100%"
                 }}
               >
-                <div className={cn("px-7 py-6", resumeTemplate.body, isCompact && "px-6 py-5")} style={{ fontSize: `${(14 * zoom) / 100}px` }}>
+                <div className={cn("resume-print-page px-7 py-6", resumeTemplate.body, isCompact && "px-6 py-5")} style={{ fontSize: `${(14 * zoom) / 100}px` }}>
                   {/* Header */}
                   <div className={resumeTemplate.header}>
-                    <h1 className={cn("text-2xl", resumeTemplate.name, templateId === "executive" && "uppercase")} style={{ fontSize: `${(24 * zoom) / 100}px` }}>
+                    <h1 className={cn("text-2xl", resumeTemplate.name, selectedTemplateId === "executive" && "uppercase")} style={{ fontSize: `${(24 * zoom) / 100}px` }}>
                       {profile.personalInfo.firstName} {profile.personalInfo.lastName}
                     </h1>
-                    {templateId === "executive" && <div className="w-20 h-px bg-gray-800 mx-auto my-2" />}
+                    {selectedTemplateId === "executive" && <div className="w-20 h-px bg-gray-800 mx-auto my-2" />}
                     <p className={cn("mt-1", resumeTemplate.contact)} style={{ fontSize: `${(12 * zoom) / 100}px` }}>
                       {profile.personalInfo.email} | {profile.personalInfo.phone} | {profile.personalInfo.location}
                     </p>
