@@ -92,289 +92,6 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url)
 }
 
-function escapePdfText(value: string) {
-  return value.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)")
-}
-
-function wrapText(value: string, maxLength: number) {
-  if (!value.trim()) return [""]
-
-  const words = value.split(/\s+/)
-  const lines: string[] = []
-  let currentLine = ""
-
-  for (const word of words) {
-    const nextLine = currentLine ? `${currentLine} ${word}` : word
-    if (nextLine.length > maxLength && currentLine) {
-      lines.push(currentLine)
-      currentLine = word
-    } else {
-      currentLine = nextLine
-    }
-  }
-
-  if (currentLine) lines.push(currentLine)
-  return lines
-}
-
-function createPdfBlob(text: string) {
-  const wrappedLines = text
-    .split("\n")
-    .flatMap((line) => wrapText(line, 95))
-  const linesPerPage = 58
-  const pages = Array.from({ length: Math.ceil(wrappedLines.length / linesPerPage) || 1 }, (_, index) =>
-    wrappedLines.slice(index * linesPerPage, (index + 1) * linesPerPage)
-  )
-  const objects: string[] = []
-  const addObject = (content: string) => {
-    objects.push(content)
-    return objects.length
-  }
-
-  const catalogRef = addObject("<< /Type /Catalog /Pages 2 0 R >>")
-  const pagesRef = addObject("")
-  const fontRef = addObject("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
-  const pageRefs: number[] = []
-
-  for (const pageLines of pages) {
-    const stream = [
-      "BT",
-      "/F1 10 Tf",
-      "50 780 Td",
-      "14 TL",
-      ...pageLines.map((line) => `(${escapePdfText(line)}) Tj T*`),
-      "ET",
-    ].join("\n")
-    const contentRef = addObject(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`)
-    const pageRef = addObject(`<< /Type /Page /Parent ${pagesRef} 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${fontRef} 0 R >> >> /Contents ${contentRef} 0 R >>`)
-    pageRefs.push(pageRef)
-  }
-
-  objects[pagesRef - 1] = `<< /Type /Pages /Kids [${pageRefs.map((ref) => `${ref} 0 R`).join(" ")}] /Count ${pageRefs.length} >>`
-
-  let pdf = "%PDF-1.4\n"
-  const offsets = [0]
-  objects.forEach((object, index) => {
-    offsets.push(pdf.length)
-    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`
-  })
-  const xrefOffset = pdf.length
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`
-  offsets.slice(1).forEach((offset) => {
-    pdf += `${offset.toString().padStart(10, "0")} 00000 n \n`
-  })
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root ${catalogRef} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`
-
-  return new Blob([pdf], { type: "application/pdf" })
-}
-
-function createFormattedResumePdfBlob({
-  generatedResume,
-  tailoredSkills,
-  displayProjects,
-  displayAchievements,
-  templateId,
-}: {
-  generatedResume: GeneratedResume
-  tailoredSkills: string[]
-  displayProjects: ResumeProject[]
-  displayAchievements: string[]
-  templateId: TemplateId
-}) {
-  const profile = generatedResume.profile
-  const objects: string[] = []
-  const addObject = (content: string) => {
-    objects.push(content)
-    return objects.length
-  }
-  const pages: string[] = []
-  const marginX = 46
-  const pageWidth = 612
-  const pageHeight = 792
-  const contentWidth = pageWidth - marginX * 2
-  let commands: string[] = []
-  let y = 756
-
-  const textWidth = (text: string, size: number) => text.length * size * 0.48
-  const maxChars = (width: number, size: number) => Math.max(18, Math.floor(width / (size * 0.5)))
-  const finishPage = () => {
-    pages.push(commands.join("\n"))
-    commands = []
-    y = 756
-  }
-  const ensureSpace = (height: number) => {
-    if (y - height < 42) finishPage()
-  }
-  const drawText = (
-    text: string,
-    x: number,
-    currentY: number,
-    size = 9,
-    font: "regular" | "bold" | "italic" = "regular",
-    align: "left" | "center" | "right" = "left"
-  ) => {
-    const fontName = font === "bold" ? "F2" : font === "italic" ? "F3" : "F1"
-    const adjustedX =
-      align === "center"
-        ? x - textWidth(text, size) / 2
-        : align === "right"
-          ? x - textWidth(text, size)
-          : x
-    commands.push(`BT /${fontName} ${size} Tf ${adjustedX.toFixed(2)} ${currentY.toFixed(2)} Td (${escapePdfText(text)}) Tj ET`)
-  }
-  const drawLine = (lineY: number, width = contentWidth, x = marginX, strokeWidth = 0.7) => {
-    commands.push(`${strokeWidth} w ${x} ${lineY.toFixed(2)} m ${x + width} ${lineY.toFixed(2)} l S`)
-  }
-  const addWrappedText = (
-    text: string,
-    options: {
-      x?: number
-      width?: number
-      size?: number
-      lineHeight?: number
-      font?: "regular" | "bold" | "italic"
-      bullet?: boolean
-    } = {}
-  ) => {
-    const size = options.size || 9
-    const lineHeight = options.lineHeight || 11
-    const x = options.x || marginX
-    const width = options.width || contentWidth
-    const prefix = options.bullet ? "- " : ""
-    const lines = wrapText(text, maxChars(width - (options.bullet ? 12 : 0), size))
-
-    ensureSpace(lines.length * lineHeight + 2)
-    lines.forEach((line, index) => {
-      drawText(`${index === 0 ? prefix : "  "}${line}`, x, y, size, options.font)
-      y -= lineHeight
-    })
-  }
-  const addSection = (title: string) => {
-    ensureSpace(24)
-    y -= 6
-    drawText(title.toUpperCase(), marginX, y, 10, "bold")
-    drawLine(y - 4)
-    y -= 16
-  }
-
-  if (templateId === "harvard") {
-    drawText(`${profile.personalInfo.firstName} ${profile.personalInfo.lastName}`, pageWidth / 2, y, 18, "bold", "center")
-    y -= 16
-    drawText(`${profile.personalInfo.email} | ${profile.personalInfo.phone} | ${profile.personalInfo.location}`, pageWidth / 2, y, 8, "regular", "center")
-    y -= 11
-    drawText(`${profile.personalInfo.linkedin} | ${profile.personalInfo.github} | ${profile.personalInfo.portfolio}`, pageWidth / 2, y, 8, "regular", "center")
-    y -= 10
-    drawLine(y, contentWidth, marginX, 1.2)
-    y -= 12
-  } else if (templateId === "executive") {
-    drawLine(y + 4, contentWidth, marginX, 1.2)
-    y -= 20
-    drawText(`${profile.personalInfo.firstName} ${profile.personalInfo.lastName}`.toUpperCase(), pageWidth / 2, y, 18, "bold", "center")
-    y -= 13
-    drawLine(y + 5, 80, pageWidth / 2 - 40, 0.8)
-    y -= 7
-    drawText(`${profile.personalInfo.email} | ${profile.personalInfo.phone} | ${profile.personalInfo.location}`, pageWidth / 2, y, 8, "regular", "center")
-    y -= 10
-    drawText(`${profile.personalInfo.linkedin} | ${profile.personalInfo.github} | ${profile.personalInfo.portfolio}`, pageWidth / 2, y, 8, "regular", "center")
-    y -= 10
-    drawLine(y, contentWidth, marginX, 1.2)
-    y -= 14
-  } else if (templateId === "compact") {
-    drawText(`${profile.personalInfo.firstName} ${profile.personalInfo.lastName}`, marginX, y, 17, "bold")
-    drawText(`${profile.personalInfo.email}`, pageWidth - marginX, y, 8, "regular", "right")
-    y -= 12
-    drawText("Software Developer | Data Analyst", marginX, y, 8, "regular")
-    drawText(`${profile.personalInfo.location} | ${profile.personalInfo.github}`, pageWidth - marginX, y, 8, "regular", "right")
-    y -= 9
-    drawLine(y, contentWidth, marginX, 0.9)
-    y -= 11
-  } else {
-    drawLine(y + 4, contentWidth, marginX, 2)
-    y -= 16
-    drawText(`${profile.personalInfo.firstName} ${profile.personalInfo.lastName}`, marginX, y, 18, "bold")
-    y -= 13
-    drawText(`${profile.personalInfo.email} | ${profile.personalInfo.phone} | ${profile.personalInfo.location}`, marginX, y, 8, "regular")
-    y -= 10
-    drawText(`${profile.personalInfo.linkedin} | ${profile.personalInfo.github} | ${profile.personalInfo.portfolio}`, marginX, y, 8, "regular")
-    y -= 12
-  }
-
-  addSection("Professional Summary")
-  addWrappedText(generatedResume.improvedSummary || generatedResume.summary, { size: 9, lineHeight: 11 })
-
-  addSection("Technical Skills")
-  addWrappedText(`Relevant Skills: ${tailoredSkills.join(", ")}`, { size: 8.5, lineHeight: 10.5 })
-
-  addSection("Professional Experience")
-  generatedResume.selectedExperience.forEach((exp) => {
-    ensureSpace(42)
-    drawText(exp.position, marginX, y, 9.5, "bold")
-    drawText(`${exp.startDate} - ${exp.endDate}`, pageWidth - marginX, y, 8, "regular", "right")
-    y -= 11
-    drawText(`${exp.company}, ${exp.location}`, marginX, y, 8.5, "italic")
-    y -= 11
-    exp.description.forEach((bullet) => addWrappedText(bullet, { x: marginX + 10, width: contentWidth - 10, size: 8.5, lineHeight: 10, bullet: true }))
-    y -= 3
-  })
-
-  addSection("Projects")
-  displayProjects.forEach((project) => {
-    ensureSpace(42)
-    drawText(project.name, marginX, y, 9.5, "bold")
-    drawText(project.technologies.slice(0, 5).join(", "), pageWidth - marginX, y, 7.5, "regular", "right")
-    y -= 11
-    project.highlights.forEach((highlight) => addWrappedText(highlight, { x: marginX + 10, width: contentWidth - 10, size: 8.5, lineHeight: 10, bullet: true }))
-    y -= 3
-  })
-
-  addSection("Education")
-  profile.education.forEach((edu) => {
-    ensureSpace(26)
-    drawText(`${edu.degree} in ${edu.field}`, marginX, y, 9, "bold")
-    drawText(edu.endDate, pageWidth - marginX, y, 8, "regular", "right")
-    y -= 10
-    drawText(`${edu.institution}${edu.gpa ? ` | GPA: ${edu.gpa}` : ""}`, marginX, y, 8.5)
-    y -= 13
-  })
-
-  if (displayAchievements.length) {
-    addSection("Achievements")
-    displayAchievements.forEach((achievement) => addWrappedText(achievement, { x: marginX + 10, width: contentWidth - 10, size: 8.5, lineHeight: 10, bullet: true }))
-  }
-
-  finishPage()
-
-  const catalogRef = addObject("<< /Type /Catalog /Pages 2 0 R >>")
-  const pagesRef = addObject("")
-  const regularFontRef = addObject("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
-  const boldFontRef = addObject("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>")
-  const italicFontRef = addObject("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique >>")
-  const pageRefs: number[] = []
-
-  pages.forEach((streamCommands) => {
-    const contentRef = addObject(`<< /Length ${streamCommands.length} >>\nstream\n${streamCommands}\nendstream`)
-    const pageRef = addObject(`<< /Type /Page /Parent ${pagesRef} 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 ${regularFontRef} 0 R /F2 ${boldFontRef} 0 R /F3 ${italicFontRef} 0 R >> >> /Contents ${contentRef} 0 R >>`)
-    pageRefs.push(pageRef)
-  })
-
-  objects[pagesRef - 1] = `<< /Type /Pages /Kids [${pageRefs.map((ref) => `${ref} 0 R`).join(" ")}] /Count ${pageRefs.length} >>`
-
-  let pdf = "%PDF-1.4\n"
-  const offsets = [0]
-  objects.forEach((object, index) => {
-    offsets.push(pdf.length)
-    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`
-  })
-  const xrefOffset = pdf.length
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`
-  offsets.slice(1).forEach((offset) => {
-    pdf += `${offset.toString().padStart(10, "0")} 00000 n \n`
-  })
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root ${catalogRef} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`
-
-  return new Blob([pdf], { type: "application/pdf" })
-}
-
 function escapeXml(value: string) {
   return value
     .replace(/&/g, "&amp;")
@@ -525,20 +242,14 @@ function mergeProjectsForFullPage(projects: ResumeProject[], profileProjects: Re
   })
 }
 
-function mergeAchievementsForFullPage(achievements: string[], profileAchievements: string[]) {
-  return Array.from(new Set([...achievements, ...profileAchievements])).slice(0, 5)
-}
-
 function buildDownloadText({
   generatedResume,
   tailoredSkills,
   displayProjects,
-  displayAchievements,
 }: {
   generatedResume: GeneratedResume
   tailoredSkills: string[]
   displayProjects: ResumeProject[]
-  displayAchievements: string[]
 }) {
   const profile = generatedResume.profile
 
@@ -570,13 +281,6 @@ function buildDownloadText({
       `${edu.degree} in ${edu.field} | ${edu.institution} | ${edu.endDate}`,
       edu.gpa ? `GPA: ${edu.gpa}` : "",
     ]),
-    "",
-    ...(displayAchievements.length
-      ? [
-          "ACHIEVEMENTS",
-          ...displayAchievements.map((achievement) => `- ${achievement}`),
-        ]
-      : []),
   ].filter((line) => line !== undefined).join("\n").trim()
 }
 
@@ -612,11 +316,10 @@ export default function ResumePreviewPage() {
   const resumeTemplate = templateStyles[selectedTemplateId]
   const isCompact = selectedTemplateId === "compact"
   const displayProjects = mergeProjectsForFullPage(generatedResume.selectedProjects, profile.projects)
-  const displayAchievements = mergeAchievementsForFullPage(generatedResume.selectedAchievements || [], profile.achievements || [])
-  const downloadText = buildDownloadText({ generatedResume, tailoredSkills, displayProjects, displayAchievements })
+  const downloadText = buildDownloadText({ generatedResume, tailoredSkills, displayProjects })
   const fileBaseName = sanitizeFilename(`${profile.personalInfo.firstName}_${profile.personalInfo.lastName}_resume`) || "resume"
 
-  const handleDownloadPDF = () => {
+  const handleDownloadPDF = async () => {
     const resumeNode = resumePrintRef.current
     const resumeTemplateId = getTemplateId(generatedResume.template)
 
@@ -625,19 +328,31 @@ export default function ResumePreviewPage() {
       return
     }
 
-    const previousTitle = document.title
-    document.title = fileBaseName
-    document.body.classList.add("printing-resume")
-    const previousZoom = zoom
-    setZoom(100)
+    try {
+      toast.loading("Generating PDF...", { id: "resume-pdf" })
+      const previousZoom = zoom
+      setZoom(100)
+      await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)))
+      const capture = await captureResumeNode(resumeNode)
+      const pdf = createImagePdfBlob({
+        imageDataUrl: capture.dataUrl,
+        imageWidth: capture.width,
+        imageHeight: capture.height,
+        title: `${profile.personalInfo.firstName} ${profile.personalInfo.lastName} Resume`,
+      })
 
-    window.setTimeout(() => {
-      window.print()
-      document.body.classList.remove("printing-resume")
-      document.title = previousTitle
+      downloadBlob(pdf, `${fileBaseName}.pdf`)
       setZoom(previousZoom)
-      toast.success("Choose Save as PDF in the print dialog")
-    }, 100)
+      toast.success("PDF downloaded", { id: "resume-pdf" })
+    } catch (error) {
+      console.error("PDF generation failed", error)
+      printResumeFallback({
+        resumeNode,
+        fileBaseName,
+        previousZoom: zoom,
+        restoreZoom: setZoom,
+      })
+    }
   }
 
   const handleDownloadDOCX = () => {
@@ -688,67 +403,69 @@ export default function ResumePreviewPage() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5 }}
-                className="resume-print-root bg-white rounded-lg shadow-lg mx-auto overflow-auto"
+                className="resume-print-root bg-white rounded-lg shadow-lg mx-auto overflow-visible"
                 style={{
                   width: `${(8.5 * 96 * zoom) / 100}px`,
                   minHeight: `${(11 * 96 * zoom) / 100}px`,
-                  maxWidth: "100%"
+                  maxWidth: "100%",
+                  boxSizing: "border-box",
+                  display: "block"
                 }}
               >
-                <div className={cn("resume-print-page px-7 py-6", resumeTemplate.body, isCompact && "px-6 py-5")} style={{ fontSize: `${(14 * zoom) / 100}px` }}>
+                <div className={cn("resume-print-page", resumeTemplate.body, isCompact ? "px-6 py-5" : "px-7 py-6")} style={{ fontSize: `${(14 * zoom) / 100}px`, lineHeight: "1.5" }}>
                   {/* Header */}
-                  <div className={resumeTemplate.header}>
-                    <h1 className={cn("text-2xl", resumeTemplate.name, selectedTemplateId === "executive" && "uppercase")} style={{ fontSize: `${(24 * zoom) / 100}px` }}>
+                  <div className={resumeTemplate.header} style={{ pageBreakInside: "avoid" }}>
+                    <h1 className={cn("text-2xl", resumeTemplate.name, selectedTemplateId === "executive" && "uppercase")} style={{ fontSize: `${(24 * zoom) / 100}px`, margin: "0 0 0.3em 0" }}>
                       {profile.personalInfo.firstName} {profile.personalInfo.lastName}
                     </h1>
-                    {selectedTemplateId === "executive" && <div className="w-20 h-px bg-gray-800 mx-auto my-2" />}
-                    <p className={cn("mt-1", resumeTemplate.contact)} style={{ fontSize: `${(12 * zoom) / 100}px` }}>
+                    {selectedTemplateId === "executive" && <div className="w-20 h-px bg-gray-800 mx-auto my-1" style={{ margin: "0.2em auto" }} />}
+                    <p className={cn("mt-1", resumeTemplate.contact)} style={{ fontSize: `${(11 * zoom) / 100}px`, margin: "0.2em 0 0 0" }}>
                       {profile.personalInfo.email} | {profile.personalInfo.phone} | {profile.personalInfo.location}
                     </p>
-                    <p className={resumeTemplate.contact} style={{ fontSize: `${(12 * zoom) / 100}px` }}>
+                    <p className={resumeTemplate.contact} style={{ fontSize: `${(11 * zoom) / 100}px`, margin: "0.1em 0 0 0" }}>
                       {profile.personalInfo.linkedin} | {profile.personalInfo.github} | {profile.personalInfo.portfolio}
                     </p>
                   </div>
 
                   {/* Professional Summary */}
-                  <div className={isCompact ? "mb-2" : "mb-3"}>
-                    <h2 className={cn("text-sm font-bold pb-1 mb-2", resumeTemplate.section)}>
+                  <div className={isCompact ? "mb-1.5" : "mb-2.5"}>
+                    <h2 className={cn("text-sm font-bold pb-1 mb-1.5", resumeTemplate.section)}>
                       Professional Summary
                     </h2>
-                    <p className="text-gray-700 leading-relaxed" style={{ fontSize: `${(12 * zoom) / 100}px` }}>
+                    <p className="text-gray-700 leading-relaxed" style={{ fontSize: `${(11 * zoom) / 100}px`, margin: 0 }}>
                       {generatedResume.improvedSummary || generatedResume.summary}
                     </p>
                   </div>
 
                   {/* Technical Skills */}
-                  <div className={isCompact ? "mb-2" : "mb-3"}>
-                    <h2 className={cn("text-sm font-bold pb-1 mb-2", resumeTemplate.section)}>
+                  <div className={isCompact ? "mb-1.5" : "mb-2.5"}>
+                    <h2 className={cn("text-sm font-bold pb-1 mb-1.5", resumeTemplate.section)}>
                       Technical Skills
                     </h2>
-                    <div className="text-gray-700" style={{ fontSize: `${(12 * zoom) / 100}px` }}>
-                      <p><strong>Relevant Skills:</strong> {tailoredSkills.join(", ")}</p>
+                    <div className="text-gray-700" style={{ fontSize: `${(11 * zoom) / 100}px`, margin: 0 }}>
+                      <p style={{ margin: 0 }}><strong>Relevant Skills:</strong> {tailoredSkills.join(", ")}</p>
                     </div>
                   </div>
 
                   {/* Experience */}
-                  <div className={isCompact ? "mb-2" : "mb-3"}>
-                    <h2 className={cn("text-sm font-bold pb-1 mb-2", resumeTemplate.section)}>
+                  <div className={isCompact ? "mb-1.5" : "mb-2.5"}>
+                    <h2 className={cn("text-sm font-bold pb-1 mb-1.5", resumeTemplate.section)}>
                       Professional Experience
                     </h2>
                     {generatedResume.selectedExperience.map((exp) => (
-                      <div key={exp.id} className={isCompact ? "mb-2" : "mb-2.5"}>
+                      <div key={exp.id} className={isCompact ? "mb-1.5" : "mb-2"} style={{ pageBreakInside: "avoid" }}>
                         <div className="flex justify-between items-baseline gap-4">
-                          <h3 className={resumeTemplate.itemTitle}>{exp.position}</h3>
-                          <span className="text-gray-600 whitespace-nowrap" style={{ fontSize: `${(11 * zoom) / 100}px` }}>
+                          <h3 className={resumeTemplate.itemTitle} style={{ fontSize: `${(12 * zoom) / 100}px`, margin: 0 }}>{exp.position}</h3>
+                          <span className="text-gray-600 whitespace-nowrap" style={{ fontSize: `${(10 * zoom) / 100}px`, margin: 0 }}>
                             {exp.startDate} - {exp.endDate}
                           </span>
                         </div>
-                        <p className="text-gray-700 italic" style={{ fontSize: `${(12 * zoom) / 100}px` }}>
+                        <p className="text-gray-700 italic" style={{ fontSize: `${(11 * zoom) / 100}px`, margin: "0.2em 0 0 0" }}>
                           {exp.company}, {exp.location}
                         </p>
-                        <ul className={cn("list-disc pl-5 text-gray-700", isCompact ? "mt-0.5" : "mt-1")} style={{ fontSize: `${(12 * zoom) / 100}px` }}>
+                        <ul className={cn("list-disc pl-5 text-gray-700", isCompact ? "mt-0.5" : "mt-0.5")} style={{ fontSize: `${(11 * zoom) / 100}px`, margin: "0.3em 0 0 0" }}>
                           {exp.description.map((bullet, idx) => (
-                            <li key={idx}>{bullet}</li>
+                            <li key={idx} style={{ margin: "0.15em 0", pageBreakInside: "avoid" }}>{bullet}</li>
                           ))}
                         </ul>
                       </div>
@@ -756,21 +473,21 @@ export default function ResumePreviewPage() {
                   </div>
 
                   {/* Projects */}
-                  <div className={isCompact ? "mb-2" : "mb-3"}>
-                    <h2 className={cn("text-sm font-bold pb-1 mb-2", resumeTemplate.section)}>
+                  <div className={isCompact ? "mb-1.5" : "mb-2.5"}>
+                    <h2 className={cn("text-sm font-bold pb-1 mb-1.5", resumeTemplate.section)}>
                       Projects
                     </h2>
                     {displayProjects.map((project) => (
-                      <div key={project.id} className={isCompact ? "mb-2" : "mb-2.5"}>
+                      <div key={project.id} className={isCompact ? "mb-1.5" : "mb-2"} style={{ pageBreakInside: "avoid" }}>
                         <div className="flex justify-between items-baseline gap-4">
-                          <h3 className={resumeTemplate.itemTitle}>{project.name}</h3>
-                          <span className="text-gray-600 text-right" style={{ fontSize: `${(11 * zoom) / 100}px` }}>
+                          <h3 className={resumeTemplate.itemTitle} style={{ fontSize: `${(12 * zoom) / 100}px`, margin: 0 }}>{project.name}</h3>
+                          <span className="text-gray-600 text-right" style={{ fontSize: `${(10 * zoom) / 100}px`, margin: 0 }}>
                             {project.technologies.slice(0, 5).join(", ")}
                           </span>
                         </div>
-                        <ul className="list-disc pl-5 text-gray-700" style={{ fontSize: `${(12 * zoom) / 100}px` }}>
+                        <ul className="list-disc pl-5 text-gray-700" style={{ fontSize: `${(11 * zoom) / 100}px`, margin: "0.3em 0 0 0" }}>
                           {project.highlights.map((highlight, idx) => (
-                            <li key={idx}>{highlight}</li>
+                            <li key={idx} style={{ margin: "0.15em 0", pageBreakInside: "avoid" }}>{highlight}</li>
                           ))}
                         </ul>
                       </div>
@@ -778,38 +495,24 @@ export default function ResumePreviewPage() {
                   </div>
 
                   {/* Education */}
-                  <div className={isCompact ? "mb-2" : "mb-3"}>
-                    <h2 className={cn("text-sm font-bold pb-1 mb-2", resumeTemplate.section)}>
+                  <div className={isCompact ? "mb-1.5" : "mb-2.5"}>
+                    <h2 className={cn("text-sm font-bold pb-1 mb-1.5", resumeTemplate.section)}>
                       Education
                     </h2>
                     {profile.education.map((edu) => (
-                      <div key={edu.id} className="mb-2">
+                      <div key={edu.id} className="mb-1" style={{ pageBreakInside: "avoid" }}>
                         <div className="flex justify-between items-baseline gap-4">
-                          <h3 className={resumeTemplate.itemTitle}>{edu.degree} in {edu.field}</h3>
-                          <span className="text-gray-600 whitespace-nowrap" style={{ fontSize: `${(11 * zoom) / 100}px` }}>
+                          <h3 className={resumeTemplate.itemTitle} style={{ fontSize: `${(12 * zoom) / 100}px`, margin: 0 }}>{edu.degree} in {edu.field}</h3>
+                          <span className="text-gray-600 whitespace-nowrap" style={{ fontSize: `${(10 * zoom) / 100}px`, margin: 0 }}>
                             {edu.endDate}
                           </span>
                         </div>
-                        <p className="text-gray-700" style={{ fontSize: `${(12 * zoom) / 100}px` }}>
+                        <p className="text-gray-700" style={{ fontSize: `${(11 * zoom) / 100}px`, margin: "0.15em 0 0 0" }}>
                           {edu.institution} | GPA: {edu.gpa}
                         </p>
                       </div>
                     ))}
                   </div>
-
-                  {/* Achievements */}
-                  {displayAchievements.length > 0 && (
-                    <div className="mb-3">
-                      <h2 className={cn("text-sm font-bold pb-1 mb-2", resumeTemplate.section)}>
-                        Achievements
-                      </h2>
-                      <ul className="list-disc pl-5 text-gray-700" style={{ fontSize: `${(12 * zoom) / 100}px` }}>
-                        {displayAchievements.map((achievement, idx) => (
-                          <li key={idx}>{achievement}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
 
                   {/* Certifications are temporarily hidden. Keep this block for future re-enable. */}
                   {/* <div>

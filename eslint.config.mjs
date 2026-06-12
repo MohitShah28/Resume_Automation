@@ -20,6 +20,12 @@ export default [
     rules: {
       ...reactHooks.configs.recommended.rules,
       'no-undef': 'off',
+      'react-hooks/set-state-in-effect': 'off',
+      '@typescript-eslint/no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_',
+      }],
     },
   },
 ]

@@ -7,7 +7,6 @@ import { motion, AnimatePresence } from "framer-motion"
 import {
   LayoutDashboard,
   User,
-  Search,
   FileText,
   Eye,
   History,
@@ -22,7 +21,6 @@ import { Button } from "@/components/ui/button"
 const navItems = [
   { href: "/", icon: LayoutDashboard, label: "Dashboard" },
   { href: "/profile", icon: User, label: "Profile Knowledge Base" },
-  { href: "/job-analysis", icon: Search, label: "Job Analysis" },
   { href: "/resume-builder", icon: FileText, label: "Resume Builder" },
   { href: "/resume-preview", icon: Eye, label: "Resume Preview" },
   { href: "/history", icon: History, label: "Resume History" },

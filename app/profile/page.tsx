@@ -829,7 +829,7 @@ function SkillsSection({ profile, setProfile }: { profile: Profile; setProfile: 
   )
 }
 
-function CertificationsSection({ profile, setProfile }: { profile: Profile; setProfile: SetProfile }) {
+function _CertificationsSection({ profile, setProfile }: { profile: Profile; setProfile: SetProfile }) {
   const updateCertification = (id: string, field: keyof Profile["certifications"][number], value: string) => {
     setProfile((p) => ({
       ...p,

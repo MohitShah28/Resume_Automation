@@ -224,7 +224,7 @@ function extractKeywords(jobDescription: string) {
 
 function inferJobTitle(jobDescription: string) {
   const titlePatterns = [
-    /(?:title|role|position)\s*[:\-]\s*([^\n.]+)/i,
+    /(?:title|role|position)\s*[:-]\s*([^\n.]+)/i,
     /looking for a\s+([^.]+?)\s+to join/i,
     /\b(Software Engineering Intern|Software Engineer Intern|Software Developer Intern|Software Engineer|Software Developer|Data Analyst|Data Scientist|Business Analyst|ML Engineer|Machine Learning Engineer|Analytics Manager)\b/i,
   ]
@@ -239,7 +239,7 @@ function inferJobTitle(jobDescription: string) {
 }
 
 function inferCompany(jobDescription: string) {
-  const match = jobDescription.match(/(?:company|employer|organization)\s*[:\-]\s*([^\n.]+)/i)
+  const match = jobDescription.match(/(?:company|employer|organization)\s*[:-]\s*([^\n.]+)/i)
   return match?.[1]?.trim() || "Target Company"
 }
 
