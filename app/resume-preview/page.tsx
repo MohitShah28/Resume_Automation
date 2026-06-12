@@ -92,6 +92,81 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url)
 }
 
+function openResumePrintWindow(resumeNode: HTMLElement, fileBaseName: string) {
+  const printWindow = window.open("", "_blank", "width=980,height=1200")
+
+  if (!printWindow) {
+    toast.error("Please allow popups to export the PDF.")
+    return false
+  }
+
+  const styleTags = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
+    .map((node) => node.outerHTML)
+    .join("\n")
+  const clonedResume = resumeNode.cloneNode(true) as HTMLElement
+
+  clonedResume.classList.remove("shadow-lg", "rounded-lg")
+  clonedResume.style.width = "8.5in"
+  clonedResume.style.maxWidth = "none"
+  clonedResume.style.margin = "0 auto"
+  clonedResume.style.boxShadow = "none"
+  clonedResume.style.borderRadius = "0"
+  clonedResume.style.overflow = "visible"
+
+  printWindow.document.open()
+  printWindow.document.write(`<!doctype html>
+<html>
+  <head>
+    <title>${fileBaseName}</title>
+    ${styleTags}
+    <style>
+      @page { size: letter; margin: 0; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: #ffffff;
+        color: #111827;
+      }
+      body {
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+      }
+      .resume-print-root {
+        width: 8.5in !important;
+        max-width: none !important;
+        min-height: 11in !important;
+        box-shadow: none !important;
+        border-radius: 0 !important;
+        overflow: visible !important;
+        background: #ffffff !important;
+      }
+      .resume-print-page {
+        min-height: 11in !important;
+        box-sizing: border-box !important;
+        background: #ffffff !important;
+        color: #111827 !important;
+        print-color-adjust: exact;
+        -webkit-print-color-adjust: exact;
+      }
+    </style>
+  </head>
+  <body>
+    ${clonedResume.outerHTML}
+    <script>
+      window.addEventListener('load', () => {
+        setTimeout(() => {
+          window.print();
+          window.close();
+        }, 250);
+      });
+    </script>
+  </body>
+</html>`)
+  printWindow.document.close()
+  return true
+}
+
 function escapeXml(value: string) {
   return value
     .replace(/&/g, "&amp;")
@@ -328,30 +403,21 @@ export default function ResumePreviewPage() {
       return
     }
 
+    const previousZoom = zoom
+
     try {
-      toast.loading("Generating PDF...", { id: "resume-pdf" })
-      const previousZoom = zoom
+      toast.loading("Preparing PDF preview...", { id: "resume-pdf" })
       setZoom(100)
       await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)))
-      const capture = await captureResumeNode(resumeNode)
-      const pdf = createImagePdfBlob({
-        imageDataUrl: capture.dataUrl,
-        imageWidth: capture.width,
-        imageHeight: capture.height,
-        title: `${profile.personalInfo.firstName} ${profile.personalInfo.lastName} Resume`,
-      })
-
-      downloadBlob(pdf, `${fileBaseName}.pdf`)
+      const didOpenPrintWindow = openResumePrintWindow(resumeNode, fileBaseName)
       setZoom(previousZoom)
-      toast.success("PDF downloaded", { id: "resume-pdf" })
+      if (didOpenPrintWindow) {
+        toast.success("Print dialog opened. Choose Save as PDF.", { id: "resume-pdf" })
+      }
     } catch (error) {
+      setZoom(previousZoom)
       console.error("PDF generation failed", error)
-      printResumeFallback({
-        resumeNode,
-        fileBaseName,
-        previousZoom: zoom,
-        restoreZoom: setZoom,
-      })
+      toast.error("PDF generation failed. Please try again.", { id: "resume-pdf" })
     }
   }
 
