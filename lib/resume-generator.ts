@@ -54,6 +54,16 @@ export type GenerateResumeApiResponse = {
   warning?: string
 }
 
+type CachedGenerateResumeApiResponse = {
+  response: GenerateResumeApiResponse
+  cachedAt: number
+}
+
+const RESUME_GENERATION_CACHE_KEY = "resume_generation_cache_v1"
+const RESUME_GENERATION_CACHE_LIMIT = 12
+const RESUME_GENERATION_CACHE_TTL = 1000 * 60 * 60 * 24
+const inFlightResumeRequests = new Map<string, Promise<GenerateResumeApiResponse>>()
+
 export function profileToGeneratePayload({
   profile,
   jobDescription,
@@ -106,19 +116,91 @@ export function payloadToProfile(payload: GenerateResumePayload): ProfileData {
   }
 }
 
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`
+  }
+
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`)
+      .join(",")}}`
+  }
+
+  return JSON.stringify(value)
+}
+
+function getResumeRequestKey(payload: GenerateResumePayload) {
+  return stableStringify(payload)
+}
+
+function readResumeGenerationCache() {
+  if (typeof window === "undefined") return {}
+
+  try {
+    const value = window.localStorage.getItem(RESUME_GENERATION_CACHE_KEY)
+    return value ? (JSON.parse(value) as Record<string, CachedGenerateResumeApiResponse>) : {}
+  } catch {
+    window.localStorage.removeItem(RESUME_GENERATION_CACHE_KEY)
+    return {}
+  }
+}
+
+function getCachedResumeResponse(cacheKey: string) {
+  const cached = readResumeGenerationCache()[cacheKey]
+
+  if (!cached) return null
+  if (Date.now() - cached.cachedAt > RESUME_GENERATION_CACHE_TTL) return null
+
+  return cached.response
+}
+
+function writeResumeGenerationCache(cacheKey: string, response: GenerateResumeApiResponse) {
+  if (typeof window === "undefined") return
+
+  const cache = readResumeGenerationCache()
+  const entries = Object.entries({
+    ...cache,
+    [cacheKey]: {
+      response,
+      cachedAt: Date.now(),
+    },
+  })
+    .sort(([, left], [, right]) => right.cachedAt - left.cachedAt)
+    .slice(0, RESUME_GENERATION_CACHE_LIMIT)
+
+  window.localStorage.setItem(RESUME_GENERATION_CACHE_KEY, JSON.stringify(Object.fromEntries(entries)))
+}
+
 export async function requestGeneratedResume(payload: GenerateResumePayload): Promise<GenerateResumeApiResponse> {
-  const response = await fetch("/api/generate-resume", {
+  const cacheKey = getResumeRequestKey(payload)
+  const cachedResponse = getCachedResumeResponse(cacheKey)
+
+  if (cachedResponse) return cachedResponse
+
+  const existingRequest = inFlightResumeRequests.get(cacheKey)
+  if (existingRequest) return existingRequest
+
+  const request = fetch("/api/generate-resume", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+  }).then(async (response) => {
+    if (!response.ok) {
+      const data = await response.json().catch(() => null)
+      throw new Error(data?.error || "Resume generation failed")
+    }
+
+    const data = (await response.json()) as GenerateResumeApiResponse
+    writeResumeGenerationCache(cacheKey, data)
+    return data
+  }).finally(() => {
+    inFlightResumeRequests.delete(cacheKey)
   })
 
-  if (!response.ok) {
-    const data = await response.json().catch(() => null)
-    throw new Error(data?.error || "Resume generation failed")
-  }
-
-  return response.json()
+  inFlightResumeRequests.set(cacheKey, request)
+  return request
 }
 
 const keywordBank = [

@@ -205,6 +205,15 @@ export async function POST(request: Request) {
   const fallback = buildLocalFallback(payload)
 
   const apiKey = process.env.GROQ_API_KEY
+  const groqEnabled = process.env.GROQ_API_ENABLED !== "false"
+
+  if (!groqEnabled) {
+    return NextResponse.json({
+      resume: fallback,
+      source: "local",
+      warning: "Groq API is disabled. Used local generator fallback.",
+    })
+  }
 
   if (!apiKey) {
     return NextResponse.json({
@@ -256,13 +265,13 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json(
-      {
-        error: "AI generation limit reached. Please try again later or shorten the job description.",
-        details: lastRateLimitMessage,
-      },
-      { status: 429 }
-    )
+    return NextResponse.json({
+      resume: fallback,
+      source: "local",
+      warning: lastRateLimitMessage
+        ? `Groq rate limit reached. Used local generator fallback. ${lastRateLimitMessage}`
+        : "Groq rate limit reached. Used local generator fallback.",
+    })
   } catch (error) {
     return NextResponse.json({
       resume: fallback,
