@@ -1,7 +1,9 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import { motion } from "framer-motion"
-import { Bell, Search } from "lucide-react"
+import { Bell, Moon, Search, Sun } from "lucide-react"
+import { useTheme } from "next-themes"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -12,6 +14,15 @@ interface HeaderProps {
 }
 
 export function Header({ title, subtitle }: HeaderProps) {
+  const { resolvedTheme, setTheme } = useTheme()
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  const isDark = mounted && resolvedTheme === "dark"
+
   return (
     <motion.header
       initial={false}
@@ -22,6 +33,16 @@ export function Header({ title, subtitle }: HeaderProps) {
       <div className="h-full px-6 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <div className="lg:hidden w-10" /> {/* Spacer for mobile menu button */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="shrink-0"
+            onClick={() => setTheme(isDark ? "light" : "dark")}
+            aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+            title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+          >
+            {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+          </Button>
           <div>
             <h1 className="text-lg font-semibold text-foreground">{title}</h1>
             {subtitle && (
