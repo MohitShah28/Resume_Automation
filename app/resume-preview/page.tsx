@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { motion } from "framer-motion"
 import {
   Download,
@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { mockProfile } from "@/lib/data"
 import { GeneratedResume, generateResumeFromJob } from "@/lib/resume-generator"
+import { loadLatestGeneratedResume } from "@/lib/profile-storage"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 
@@ -72,6 +73,8 @@ type TemplateId = keyof typeof templateStyles
 type ResumeProject = GeneratedResume["selectedProjects"][number]
 
 const fallbackTemplateId: TemplateId = "modern"
+const RESUME_PAGE_WIDTH = 8.5 * 96
+const RESUME_PAGE_HEIGHT = 11 * 96
 
 function getTemplateId(value: string | undefined): TemplateId {
   return value && value in templateStyles ? (value as TemplateId) : fallbackTemplateId
@@ -107,11 +110,12 @@ function openResumePrintWindow(resumeNode: HTMLElement, fileBaseName: string) {
 
   clonedResume.classList.remove("shadow-lg", "rounded-lg")
   clonedResume.style.width = "8.5in"
+  clonedResume.style.height = "11in"
   clonedResume.style.maxWidth = "none"
   clonedResume.style.margin = "0 auto"
   clonedResume.style.boxShadow = "none"
   clonedResume.style.borderRadius = "0"
-  clonedResume.style.overflow = "visible"
+  clonedResume.style.overflow = "hidden"
 
   printWindow.document.open()
   printWindow.document.write(`<!doctype html>
@@ -122,10 +126,13 @@ function openResumePrintWindow(resumeNode: HTMLElement, fileBaseName: string) {
     <style>
       @page { size: letter; margin: 0; }
       html, body {
+        width: 8.5in;
+        height: 11in;
         margin: 0;
         padding: 0;
         background: #ffffff;
         color: #111827;
+        overflow: hidden;
       }
       body {
         display: flex;
@@ -135,19 +142,28 @@ function openResumePrintWindow(resumeNode: HTMLElement, fileBaseName: string) {
       .resume-print-root {
         width: 8.5in !important;
         max-width: none !important;
+        height: 11in !important;
         min-height: 11in !important;
         box-shadow: none !important;
         border-radius: 0 !important;
-        overflow: visible !important;
+        overflow: hidden !important;
         background: #ffffff !important;
       }
       .resume-print-page {
+        width: 8.5in !important;
+        height: 11in !important;
         min-height: 11in !important;
         box-sizing: border-box !important;
         background: #ffffff !important;
         color: #111827 !important;
+        overflow: hidden !important;
+        transform: none !important;
+        transform-origin: top left !important;
         print-color-adjust: exact;
         -webkit-print-color-adjust: exact;
+      }
+      .resume-page-content {
+        transform-origin: top left !important;
       }
     </style>
   </head>
@@ -361,21 +377,19 @@ function buildDownloadText({
 
 export default function ResumePreviewPage() {
   const resumePrintRef = useRef<HTMLDivElement>(null)
+  const resumePageRef = useRef<HTMLDivElement>(null)
+  const resumeContentRef = useRef<HTMLDivElement>(null)
   const [zoom, setZoom] = useState(100)
+  const [fitScale, setFitScale] = useState(1)
   const [generatedResume, setGeneratedResume] = useState<GeneratedResume>(fallbackResume)
   const [selectedTemplateId, setSelectedTemplateId] = useState<TemplateId>(getTemplateId(fallbackResume.template))
 
   useEffect(() => {
-    const savedResume = window.localStorage.getItem("generatedResume")
+    const savedResume = loadLatestGeneratedResume()
     if (!savedResume) return
 
-    try {
-      const parsedResume = JSON.parse(savedResume) as GeneratedResume
-      setGeneratedResume(parsedResume)
-      setSelectedTemplateId(getTemplateId(parsedResume.template))
-    } catch {
-      window.localStorage.removeItem("generatedResume")
-    }
+    setGeneratedResume(savedResume)
+    setSelectedTemplateId(getTemplateId(savedResume.template))
   }, [])
 
   const profile = generatedResume.profile
@@ -393,6 +407,33 @@ export default function ResumePreviewPage() {
   const displayProjects = mergeProjectsForFullPage(generatedResume.selectedProjects, profile.projects)
   const downloadText = buildDownloadText({ generatedResume, tailoredSkills, displayProjects })
   const fileBaseName = sanitizeFilename(`${profile.personalInfo.firstName}_${profile.personalInfo.lastName}_resume`) || "resume"
+  const screenZoomScale = zoom / 100
+
+  useLayoutEffect(() => {
+    const updateFitScale = () => {
+      const pageNode = resumePageRef.current
+      const contentNode = resumeContentRef.current
+      if (!pageNode || !contentNode) return
+
+      const computedStyle = window.getComputedStyle(pageNode)
+      const availableHeight =
+        pageNode.clientHeight -
+        Number.parseFloat(computedStyle.paddingTop) -
+        Number.parseFloat(computedStyle.paddingBottom)
+      const contentHeight = contentNode.scrollHeight
+
+      if (availableHeight <= 0 || contentHeight <= 0) {
+        setFitScale(1)
+        return
+      }
+
+      setFitScale(Math.min(1, availableHeight / contentHeight))
+    }
+
+    updateFitScale()
+    const animationFrame = window.requestAnimationFrame(updateFitScale)
+    return () => window.cancelAnimationFrame(animationFrame)
+  }, [displayProjects, generatedResume, selectedTemplateId])
 
   const handleDownloadPDF = async () => {
     const resumeNode = resumePrintRef.current
@@ -403,19 +444,14 @@ export default function ResumePreviewPage() {
       return
     }
 
-    const previousZoom = zoom
-
     try {
       toast.loading("Preparing PDF preview...", { id: "resume-pdf" })
-      setZoom(100)
       await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)))
       const didOpenPrintWindow = openResumePrintWindow(resumeNode, fileBaseName)
-      setZoom(previousZoom)
       if (didOpenPrintWindow) {
         toast.success("Print dialog opened. Choose Save as PDF.", { id: "resume-pdf" })
       }
     } catch (error) {
-      setZoom(previousZoom)
       console.error("PDF generation failed", error)
       toast.error("PDF generation failed. Please try again.", { id: "resume-pdf" })
     }
@@ -469,26 +505,47 @@ export default function ResumePreviewPage() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5 }}
-                className="resume-print-root bg-white rounded-lg shadow-lg mx-auto overflow-visible"
+                className="resume-print-root bg-white rounded-lg shadow-lg mx-auto overflow-hidden"
                 style={{
-                  width: `${(8.5 * 96 * zoom) / 100}px`,
-                  minHeight: `${(11 * 96 * zoom) / 100}px`,
+                  width: `${RESUME_PAGE_WIDTH * screenZoomScale}px`,
+                  height: `${RESUME_PAGE_HEIGHT * screenZoomScale}px`,
                   maxWidth: "100%",
                   boxSizing: "border-box",
-                  display: "block"
+                  display: "block",
                 }}
               >
-                <div className={cn("resume-print-page", resumeTemplate.body, isCompact ? "px-6 py-5" : "px-7 py-6")} style={{ fontSize: `${(14 * zoom) / 100}px`, lineHeight: "1.5" }}>
+                <div
+                  ref={resumePageRef}
+                  className={cn("resume-print-page", resumeTemplate.body, isCompact ? "px-6 py-5" : "px-7 py-6")}
+                  style={{
+                    width: `${RESUME_PAGE_WIDTH}px`,
+                    height: `${RESUME_PAGE_HEIGHT}px`,
+                    fontSize: "14px",
+                    lineHeight: "1.5",
+                    overflow: "hidden",
+                    boxSizing: "border-box",
+                    transform: `scale(${screenZoomScale})`,
+                    transformOrigin: "top left",
+                  }}
+                >
+                  <div
+                    ref={resumeContentRef}
+                    className="resume-page-content"
+                    style={{
+                      transform: `scale(${fitScale})`,
+                      transformOrigin: "top left",
+                    }}
+                  >
                   {/* Header */}
                   <div className={resumeTemplate.header} style={{ pageBreakInside: "avoid" }}>
-                    <h1 className={cn("text-2xl", resumeTemplate.name, selectedTemplateId === "executive" && "uppercase")} style={{ fontSize: `${(24 * zoom) / 100}px`, margin: "0 0 0.3em 0" }}>
+                    <h1 className={cn("text-2xl", resumeTemplate.name, selectedTemplateId === "executive" && "uppercase")} style={{ fontSize: "24px", margin: "0 0 0.3em 0" }}>
                       {profile.personalInfo.firstName} {profile.personalInfo.lastName}
                     </h1>
                     {selectedTemplateId === "executive" && <div className="w-20 h-px bg-gray-800 mx-auto my-1" style={{ margin: "0.2em auto" }} />}
-                    <p className={cn("mt-1", resumeTemplate.contact)} style={{ fontSize: `${(11 * zoom) / 100}px`, margin: "0.2em 0 0 0" }}>
+                    <p className={cn("mt-1", resumeTemplate.contact)} style={{ fontSize: "11px", margin: "0.2em 0 0 0" }}>
                       {profile.personalInfo.email} | {profile.personalInfo.phone} | {profile.personalInfo.location}
                     </p>
-                    <p className={resumeTemplate.contact} style={{ fontSize: `${(11 * zoom) / 100}px`, margin: "0.1em 0 0 0" }}>
+                    <p className={resumeTemplate.contact} style={{ fontSize: "11px", margin: "0.1em 0 0 0" }}>
                       {profile.personalInfo.linkedin} | {profile.personalInfo.github} | {profile.personalInfo.portfolio}
                     </p>
                   </div>
@@ -498,7 +555,7 @@ export default function ResumePreviewPage() {
                     <h2 className={cn("text-sm font-bold pb-1 mb-1.5", resumeTemplate.section)}>
                       Professional Summary
                     </h2>
-                    <p className="text-gray-700 leading-relaxed" style={{ fontSize: `${(11 * zoom) / 100}px`, margin: 0 }}>
+                    <p className="text-gray-700 leading-relaxed" style={{ fontSize: "11px", margin: 0 }}>
                       {generatedResume.improvedSummary || generatedResume.summary}
                     </p>
                   </div>
@@ -508,7 +565,7 @@ export default function ResumePreviewPage() {
                     <h2 className={cn("text-sm font-bold pb-1 mb-1.5", resumeTemplate.section)}>
                       Technical Skills
                     </h2>
-                    <div className="text-gray-700" style={{ fontSize: `${(11 * zoom) / 100}px`, margin: 0 }}>
+                    <div className="text-gray-700" style={{ fontSize: "11px", margin: 0 }}>
                       <p style={{ margin: 0 }}><strong>Relevant Skills:</strong> {tailoredSkills.join(", ")}</p>
                     </div>
                   </div>
@@ -521,15 +578,15 @@ export default function ResumePreviewPage() {
                     {generatedResume.selectedExperience.map((exp) => (
                       <div key={exp.id} className={isCompact ? "mb-1.5" : "mb-2"} style={{ pageBreakInside: "avoid" }}>
                         <div className="flex justify-between items-baseline gap-4">
-                          <h3 className={resumeTemplate.itemTitle} style={{ fontSize: `${(12 * zoom) / 100}px`, margin: 0 }}>{exp.position}</h3>
-                          <span className="text-gray-600 whitespace-nowrap" style={{ fontSize: `${(10 * zoom) / 100}px`, margin: 0 }}>
+                          <h3 className={resumeTemplate.itemTitle} style={{ fontSize: "12px", margin: 0 }}>{exp.position}</h3>
+                          <span className="text-gray-600 whitespace-nowrap" style={{ fontSize: "10px", margin: 0 }}>
                             {exp.startDate} - {exp.endDate}
                           </span>
                         </div>
-                        <p className="text-gray-700 italic" style={{ fontSize: `${(11 * zoom) / 100}px`, margin: "0.2em 0 0 0" }}>
+                        <p className="text-gray-700 italic" style={{ fontSize: "11px", margin: "0.2em 0 0 0" }}>
                           {exp.company}, {exp.location}
                         </p>
-                        <ul className={cn("list-disc pl-5 text-gray-700", isCompact ? "mt-0.5" : "mt-0.5")} style={{ fontSize: `${(11 * zoom) / 100}px`, margin: "0.3em 0 0 0" }}>
+                        <ul className={cn("list-disc pl-5 text-gray-700", isCompact ? "mt-0.5" : "mt-0.5")} style={{ fontSize: "11px", margin: "0.3em 0 0 0" }}>
                           {exp.description.map((bullet, idx) => (
                             <li key={idx} style={{ margin: "0.15em 0", pageBreakInside: "avoid" }}>{bullet}</li>
                           ))}
@@ -546,12 +603,12 @@ export default function ResumePreviewPage() {
                     {displayProjects.map((project) => (
                       <div key={project.id} className={isCompact ? "mb-1.5" : "mb-2"} style={{ pageBreakInside: "avoid" }}>
                         <div className="flex justify-between items-baseline gap-4">
-                          <h3 className={resumeTemplate.itemTitle} style={{ fontSize: `${(12 * zoom) / 100}px`, margin: 0 }}>{project.name}</h3>
-                          <span className="text-gray-600 text-right" style={{ fontSize: `${(10 * zoom) / 100}px`, margin: 0 }}>
+                          <h3 className={resumeTemplate.itemTitle} style={{ fontSize: "12px", margin: 0 }}>{project.name}</h3>
+                          <span className="text-gray-600 text-right" style={{ fontSize: "10px", margin: 0 }}>
                             {project.technologies.slice(0, 5).join(", ")}
                           </span>
                         </div>
-                        <ul className="list-disc pl-5 text-gray-700" style={{ fontSize: `${(11 * zoom) / 100}px`, margin: "0.3em 0 0 0" }}>
+                        <ul className="list-disc pl-5 text-gray-700" style={{ fontSize: "11px", margin: "0.3em 0 0 0" }}>
                           {project.highlights.map((highlight, idx) => (
                             <li key={idx} style={{ margin: "0.15em 0", pageBreakInside: "avoid" }}>{highlight}</li>
                           ))}
@@ -568,12 +625,12 @@ export default function ResumePreviewPage() {
                     {profile.education.map((edu) => (
                       <div key={edu.id} className="mb-1" style={{ pageBreakInside: "avoid" }}>
                         <div className="flex justify-between items-baseline gap-4">
-                          <h3 className={resumeTemplate.itemTitle} style={{ fontSize: `${(12 * zoom) / 100}px`, margin: 0 }}>{edu.degree} in {edu.field}</h3>
-                          <span className="text-gray-600 whitespace-nowrap" style={{ fontSize: `${(10 * zoom) / 100}px`, margin: 0 }}>
+                          <h3 className={resumeTemplate.itemTitle} style={{ fontSize: "12px", margin: 0 }}>{edu.degree} in {edu.field}</h3>
+                          <span className="text-gray-600 whitespace-nowrap" style={{ fontSize: "10px", margin: 0 }}>
                             {edu.endDate}
                           </span>
                         </div>
-                        <p className="text-gray-700" style={{ fontSize: `${(11 * zoom) / 100}px`, margin: "0.15em 0 0 0" }}>
+                        <p className="text-gray-700" style={{ fontSize: "11px", margin: "0.15em 0 0 0" }}>
                           {edu.institution} | GPA: {edu.gpa}
                         </p>
                       </div>
@@ -585,12 +642,13 @@ export default function ResumePreviewPage() {
                     <h2 className="text-sm font-bold text-gray-900 uppercase tracking-wide border-b border-gray-300 pb-1 mb-2">
                       Certifications
                     </h2>
-                    <div className="text-gray-700" style={{ fontSize: `${(12 * zoom) / 100}px` }}>
+                    <div className="text-gray-700" style={{ fontSize: "12px" }}>
                       {generatedResume.selectedCertifications.map((cert) => (
                         <p key={cert.id}>{cert.name} - {cert.issuer} ({cert.date})</p>
                       ))}
                     </div>
                   </div> */}
+                  </div>
                 </div>
               </motion.div>
             </AnimatedCard>

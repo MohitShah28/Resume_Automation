@@ -15,8 +15,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 import { useRouter } from "next/navigation"
-import { mockProfile } from "@/lib/data"
 import { profileToGeneratePayload, requestGeneratedResume } from "@/lib/resume-generator"
+import { clearLatestGeneratedResume, createProfileWorkingCopy, saveGeneratedResume } from "@/lib/profile-storage"
 import { toast } from "sonner"
 
 const templates = [
@@ -91,17 +91,8 @@ export default function ResumeBuilderPage() {
     
     setIsGenerating(true)
     setCurrentStep(0)
-    window.localStorage.removeItem("generatedResume")
-    const savedProfile = window.localStorage.getItem("resumeProfile")
-    let profile = mockProfile
-
-    if (savedProfile) {
-      try {
-        profile = JSON.parse(savedProfile)
-      } catch {
-        window.localStorage.removeItem("resumeProfile")
-      }
-    }
+    clearLatestGeneratedResume()
+    const profile = createProfileWorkingCopy()
 
     try {
       for (let step = 1; step <= 3; step += 1) {
@@ -120,7 +111,7 @@ export default function ResumeBuilderPage() {
         })
       )
 
-      window.localStorage.setItem("generatedResume", JSON.stringify(result.resume))
+      saveGeneratedResume(result.resume)
 
       if (result.source === "local") {
         toast.warning(result.warning || "Using local generator because Groq is not configured.")

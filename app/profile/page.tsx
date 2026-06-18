@@ -30,6 +30,7 @@ import { Badge } from "@/components/ui/badge"
 import { FileUploadZone } from "@/components/ui/file-upload-zone"
 import { mockProfile } from "@/lib/data"
 import { profileToGeneratePayload, requestGeneratedResume } from "@/lib/resume-generator"
+import { clearLatestGeneratedResume, loadMasterProfile, saveGeneratedResume, saveMasterProfile } from "@/lib/profile-storage"
 import { toast } from "sonner"
 
 const sections = [
@@ -50,36 +51,6 @@ type SetProfile = React.Dispatch<React.SetStateAction<Profile>>
 
 const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
-const aiCleaningTechnologies = mockProfile.projects.find((project) => project.name === "AI Data Cleaning Dashboard")?.technologies || []
-const hrAnalyticsTechnologies = mockProfile.projects.find((project) => project.name === "HR Analytics Platform")?.technologies || []
-
-function mergeAiCleaningTechnologies(profile: Profile) {
-  return {
-    ...profile,
-    skills: {
-      programming: Array.from(new Set([...(profile.skills.programming || []), ...mockProfile.skills.programming])),
-      dataAnalysis: Array.from(new Set([...(profile.skills.dataAnalysis || []), ...mockProfile.skills.dataAnalysis])),
-      visualization: Array.from(new Set([...(profile.skills.visualization || []), ...mockProfile.skills.visualization])),
-      databases: Array.from(new Set([...(profile.skills.databases || []), ...mockProfile.skills.databases])),
-      cloud: profile.skills.cloud || [],
-      tools: Array.from(new Set([...(profile.skills.tools || []), ...mockProfile.skills.tools])),
-    },
-    projects: profile.projects.map((project) =>
-      project.name === "AI Data Cleaning Dashboard"
-        ? {
-            ...project,
-            technologies: Array.from(new Set([...project.technologies, ...aiCleaningTechnologies])),
-          }
-        : project.name === "HR Analytics Platform" || project.name.toLowerCase().includes("attrition")
-        ? {
-            ...project,
-            technologies: Array.from(new Set([...project.technologies, ...hrAnalyticsTechnologies])),
-          }
-        : project
-    ),
-  }
-}
-
 export default function ProfilePage() {
   const router = useRouter()
   const [activeSection, setActiveSection] = useState("personal")
@@ -87,32 +58,23 @@ export default function ProfilePage() {
   const [isGeneratingResume, setIsGeneratingResume] = useState(false)
 
   useEffect(() => {
-    const savedProfile = window.localStorage.getItem("resumeProfile")
-    if (!savedProfile) return
-
-    try {
-      const mergedProfile = mergeAiCleaningTechnologies(JSON.parse(savedProfile))
-      setProfile(mergedProfile)
-      window.localStorage.setItem("resumeProfile", JSON.stringify(mergedProfile))
-    } catch {
-      window.localStorage.removeItem("resumeProfile")
-    }
+    setProfile(loadMasterProfile())
   }, [])
 
   const handleSave = () => {
-    window.localStorage.setItem("resumeProfile", JSON.stringify(profile))
+    saveMasterProfile(profile, "profile_management")
     toast.success("Profile saved successfully!")
   }
 
   const handleGenerateResume = async () => {
     setIsGeneratingResume(true)
-    window.localStorage.setItem("resumeProfile", JSON.stringify(profile))
-    window.localStorage.removeItem("generatedResume")
+    clearLatestGeneratedResume()
 
     try {
+      const workingProfile = structuredClone(profile)
       const result = await requestGeneratedResume(
         profileToGeneratePayload({
-          profile,
+          profile: workingProfile,
           targetRole: "General Resume",
           jobDescription:
             "PROFILE_ONLY_RESUME_REQUEST: Create a general ATS-friendly resume using only the candidate profile data. Do not tailor to a specific external job description. Prioritize the candidate's strongest profile summary, education, work experience, projects, technical skills, achievements, and certifications. Select the best projects from the profile and write truthful professional bullets based only on the provided details.",
@@ -123,7 +85,7 @@ export default function ProfilePage() {
         })
       )
 
-      window.localStorage.setItem("generatedResume", JSON.stringify(result.resume))
+      saveGeneratedResume(result.resume)
 
       if (result.source === "local") {
         toast.warning(result.warning || "Using local generator because Groq is not configured.")
@@ -575,44 +537,6 @@ function ExperienceSection({ profile, setProfile }: { profile: Profile; setProfi
 function ProjectsSection({ profile, setProfile }: { profile: Profile; setProfile: SetProfile }) {
   const [expanded, setExpanded] = useState<string | null>(profile.projects[0]?.id || null)
   const [technologyInputs, setTechnologyInputs] = useState<Record<string, string>>({})
-
-  useEffect(() => {
-    setProfile((p) => {
-      let changed = false
-      const projects = p.projects.map((project) => {
-        const isAiCleaningProject = project.id === "2" || project.name.toLowerCase().includes("ai data cleaning")
-        const isHrAnalyticsProject = project.id === "3" || project.name.toLowerCase().includes("attrition")
-        const requiredTechnologies = isAiCleaningProject
-          ? aiCleaningTechnologies
-          : isHrAnalyticsProject
-          ? hrAnalyticsTechnologies
-          : []
-
-        if (!requiredTechnologies.length) return project
-
-        const missingTechnologies = requiredTechnologies.filter(
-          (technology) =>
-            !project.technologies.some(
-              (existing) => existing.toLowerCase() === technology.toLowerCase()
-            )
-        )
-
-        if (!missingTechnologies.length) return project
-
-        changed = true
-        return {
-          ...project,
-          technologies: [...project.technologies, ...missingTechnologies],
-        }
-      })
-
-      if (!changed) return p
-
-      const updatedProfile = { ...p, projects }
-      window.localStorage.setItem("resumeProfile", JSON.stringify(updatedProfile))
-      return updatedProfile
-    })
-  }, [setProfile])
 
   const updateProject = (id: string, field: keyof Profile["projects"][number], value: string) => {
     setProfile((p) => ({
