@@ -2,7 +2,6 @@
 
 import Link from "next/link"
 import {
-  FileText,
   Target,
   User,
   Plus,
@@ -31,12 +30,6 @@ const actions = [
     description: "Review and download the latest generated resume.",
     href: "/resume-preview",
     icon: Eye,
-  },
-  {
-    title: "Resume History",
-    description: "View previously generated resume examples.",
-    href: "/history",
-    icon: FileText,
   },
 ]
 
