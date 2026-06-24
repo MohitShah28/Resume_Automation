@@ -165,6 +165,11 @@ function openResumePrintWindow(resumeNode: HTMLElement, fileBaseName: string) {
       .resume-page-content {
         transform-origin: top left !important;
       }
+      .resume-preview-highlight {
+        background: transparent !important;
+        box-shadow: none !important;
+        outline: none !important;
+      }
     </style>
   </head>
   <body>
@@ -333,6 +338,26 @@ function mergeProjectsForFullPage(projects: ResumeProject[], profileProjects: Re
   })
 }
 
+function normalizeCompareText(value: string | undefined) {
+  return (value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
+}
+
+function isGeneratedText(value: string | undefined, originalValues: string[]) {
+  const normalizedValue = normalizeCompareText(value)
+  if (!normalizedValue) return false
+
+  return !originalValues.some((originalValue) => normalizeCompareText(originalValue) === normalizedValue)
+}
+
+function getProfileSkills(profile: GeneratedResume["profile"]) {
+  return new Set(
+    Object.values(profile.skills)
+      .flat()
+      .map((skill) => normalizeCompareText(skill))
+      .filter(Boolean)
+  )
+}
+
 function buildDownloadText({
   generatedResume,
   tailoredSkills,
@@ -408,6 +433,31 @@ export default function ResumePreviewPage() {
   const downloadText = buildDownloadText({ generatedResume, tailoredSkills, displayProjects })
   const fileBaseName = sanitizeFilename(`${profile.personalInfo.firstName}_${profile.personalInfo.lastName}_resume`) || "resume"
   const screenZoomScale = zoom / 100
+  const profileSkillSet = getProfileSkills(profile)
+  const isSummaryGenerated = isGeneratedText(generatedResume.improvedSummary || generatedResume.summary, [
+    profile.personalInfo.summary,
+  ])
+  const isSkillGenerated = (skill: string) => !profileSkillSet.has(normalizeCompareText(skill))
+  const isExperienceBulletGenerated = (experienceId: string, bullet: string) => {
+    const profileExperience = profile.experience.find((experience) => experience.id === experienceId)
+    return isGeneratedText(bullet, profileExperience?.description || [])
+  }
+  const isProjectHighlightGenerated = (projectId: string, projectName: string, highlight: string) => {
+    const profileProject = profile.projects.find((project) => project.id === projectId || project.name === projectName)
+    return isGeneratedText(
+      highlight,
+      [profileProject?.description, ...(profileProject?.highlights || [])].filter(Boolean) as string[]
+    )
+  }
+  const changeHighlights = generatedResume.changeHighlights?.length
+    ? generatedResume.changeHighlights
+    : [
+        isSummaryGenerated ? "Rewrote the professional summary for the target job." : "",
+        "Reordered and tailored resume content for ATS relevance.",
+        generatedResume.matchedKeywords.length
+          ? `Added or emphasized keywords: ${generatedResume.matchedKeywords.slice(0, 5).join(", ")}.`
+          : "",
+      ].filter(Boolean)
 
   useLayoutEffect(() => {
     const updateFitScale = () => {
@@ -555,7 +605,10 @@ export default function ResumePreviewPage() {
                     <h2 className={cn("text-sm font-bold pb-1 mb-1.5", resumeTemplate.section)}>
                       Professional Summary
                     </h2>
-                    <p className="text-gray-700 leading-relaxed" style={{ fontSize: "11px", margin: 0 }}>
+                    <p
+                      className={cn("text-gray-700 leading-relaxed", isSummaryGenerated && "resume-preview-highlight")}
+                      style={{ fontSize: "11px", margin: 0 }}
+                    >
                       {generatedResume.improvedSummary || generatedResume.summary}
                     </p>
                   </div>
@@ -566,7 +619,15 @@ export default function ResumePreviewPage() {
                       Technical Skills
                     </h2>
                     <div className="text-gray-700" style={{ fontSize: "11px", margin: 0 }}>
-                      <p style={{ margin: 0 }}><strong>Relevant Skills:</strong> {tailoredSkills.join(", ")}</p>
+                      <p style={{ margin: 0 }}>
+                        <strong>Relevant Skills:</strong>{" "}
+                        {tailoredSkills.map((skill, index) => (
+                          <span key={`${skill}-${index}`}>
+                            <span className={cn(isSkillGenerated(skill) && "resume-preview-highlight")}>{skill}</span>
+                            {index < tailoredSkills.length - 1 ? ", " : ""}
+                          </span>
+                        ))}
+                      </p>
                     </div>
                   </div>
 
@@ -588,7 +649,13 @@ export default function ResumePreviewPage() {
                         </p>
                         <ul className={cn("list-disc pl-5 text-gray-700", isCompact ? "mt-0.5" : "mt-0.5")} style={{ fontSize: "11px", margin: "0.3em 0 0 0" }}>
                           {exp.description.map((bullet, idx) => (
-                            <li key={idx} style={{ margin: "0.15em 0", pageBreakInside: "avoid" }}>{bullet}</li>
+                            <li
+                              key={idx}
+                              className={cn(isExperienceBulletGenerated(exp.id, bullet) && "resume-preview-highlight")}
+                              style={{ margin: "0.15em 0", pageBreakInside: "avoid" }}
+                            >
+                              {bullet}
+                            </li>
                           ))}
                         </ul>
                       </div>
@@ -610,7 +677,13 @@ export default function ResumePreviewPage() {
                         </div>
                         <ul className="list-disc pl-5 text-gray-700" style={{ fontSize: "11px", margin: "0.3em 0 0 0" }}>
                           {project.highlights.map((highlight, idx) => (
-                            <li key={idx} style={{ margin: "0.15em 0", pageBreakInside: "avoid" }}>{highlight}</li>
+                            <li
+                              key={idx}
+                              className={cn(isProjectHighlightGenerated(project.id, project.name, highlight) && "resume-preview-highlight")}
+                              style={{ margin: "0.15em 0", pageBreakInside: "avoid" }}
+                            >
+                              {highlight}
+                            </li>
                           ))}
                         </ul>
                       </div>
@@ -706,8 +779,33 @@ export default function ResumePreviewPage() {
               </div>
             </AnimatedCard>
 
-            {/* Strengths */}
+            {/* What Changed */}
             <AnimatedCard delay={0.4}>
+              <h3 className="font-semibold text-foreground flex items-center gap-2 mb-3">
+                <Edit className="h-5 w-5 text-[#4f46e5]" />
+                What Changed
+              </h3>
+              <p className="text-xs text-muted-foreground mb-3">
+                Yellow highlights show text generated or modified by the resume API for preview only.
+              </p>
+              <ul className="space-y-2">
+                {changeHighlights.map((change, index) => (
+                  <motion.li
+                    key={`${change}-${index}`}
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.5 + index * 0.08 }}
+                    className="flex items-start gap-2 text-sm text-foreground"
+                  >
+                    <CheckCircle2 className="h-4 w-4 text-[#4f46e5] mt-0.5 shrink-0" />
+                    {change}
+                  </motion.li>
+                ))}
+              </ul>
+            </AnimatedCard>
+
+            {/* Strengths */}
+            <AnimatedCard delay={0.5}>
               <h3 className="font-semibold text-foreground flex items-center gap-2 mb-3">
                 <TrendingUp className="h-5 w-5 text-[#4f46e5]" />
                 Match Summary
@@ -716,7 +814,7 @@ export default function ResumePreviewPage() {
             </AnimatedCard>
 
             {/* Suggestions */}
-            <AnimatedCard delay={0.5}>
+            <AnimatedCard delay={0.6}>
               <h3 className="font-semibold text-foreground flex items-center gap-2 mb-3">
                 <AlertCircle className="h-5 w-5 text-[#f59e0b]" />
                 Improvement Suggestions
@@ -727,7 +825,7 @@ export default function ResumePreviewPage() {
                     key={index}
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 0.6 + index * 0.1 }}
+                    transition={{ delay: 0.7 + index * 0.1 }}
                     className="flex items-start gap-2 text-sm text-foreground"
                   >
                     <AlertCircle className="h-4 w-4 text-[#f59e0b] mt-0.5 shrink-0" />

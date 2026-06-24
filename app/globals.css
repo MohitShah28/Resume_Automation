@@ -128,6 +128,14 @@
   }
 }
 
+.resume-preview-highlight {
+  background: rgba(250, 204, 21, 0.38);
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.55);
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
 @media print {
   @page {
     size: letter;
@@ -212,6 +220,12 @@
 
   body.printing-resume .resume-print-page .text-gray-700 {
     color: #111827 !important;
+  }
+
+  body.printing-resume .resume-preview-highlight {
+    background: transparent !important;
+    box-shadow: none !important;
+    outline: none !important;
   }
 
   body.printing-resume .resume-print-page h1,

@@ -6,7 +6,7 @@ const LEGACY_PROFILE_KEY = "resumeProfile"
 const LATEST_GENERATED_RESUME_KEY = "generatedResume"
 const GENERATED_RESUMES_KEY = "generated_resumes"
 
-type ProfileSaveSource = "profile_management" | "resume_generation"
+type ProfileSaveSource = "profile_management" | "resume_generation" | "resume_import"
 
 export type StoredGeneratedResume = {
   id: string

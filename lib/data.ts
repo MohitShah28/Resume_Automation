@@ -155,7 +155,7 @@ export const mockProfile = {
     ],
     visualization: ["Power BI", "Tableau", "Matplotlib", "Seaborn", "Plotly", "Microsoft Excel"],
     databases: ["MySQL", "SQL Server", "Firebase"],
-    cloud: [],
+    cloud: [] as string[],
     tools: ["Streamlit", "Git", "GitHub", "Jupyter Notebook", "VS Code", "Anaconda", "DataGrip"]
   },
   certifications: [

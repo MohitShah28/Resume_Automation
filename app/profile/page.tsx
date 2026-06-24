@@ -29,7 +29,7 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { FileUploadZone } from "@/components/ui/file-upload-zone"
 import { mockProfile } from "@/lib/data"
-import { profileToGeneratePayload, requestGeneratedResume } from "@/lib/resume-generator"
+import { ProfileData, profileToGeneratePayload, requestGeneratedResume } from "@/lib/resume-generator"
 import { clearLatestGeneratedResume, loadMasterProfile, saveGeneratedResume, saveMasterProfile } from "@/lib/profile-storage"
 import { toast } from "sonner"
 
@@ -46,10 +46,68 @@ const sections = [
   { id: "files", label: "Uploaded Files", icon: FileUp },
 ]
 
-type Profile = typeof mockProfile
+type Profile = ProfileData
 type SetProfile = React.Dispatch<React.SetStateAction<Profile>>
 
 const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+function normalizeText(value: string) {
+  return value.toLowerCase().replace(/\s+/g, " ").trim()
+}
+
+function withIds<T extends { id: string }>(items: T[]) {
+  return items.map((item) => ({ ...item, id: item.id || createId() }))
+}
+
+function mergeUniqueStrings(current: string[], imported: string[]) {
+  const seen = new Set(current.map(normalizeText))
+  const merged = [...current]
+
+  for (const item of imported) {
+    const trimmedItem = item.trim()
+    if (!trimmedItem || seen.has(normalizeText(trimmedItem))) continue
+    seen.add(normalizeText(trimmedItem))
+    merged.push(trimmedItem)
+  }
+
+  return merged
+}
+
+function mergeProfileFromResume(currentProfile: Profile, importedProfile: Profile): Profile {
+  return {
+    ...currentProfile,
+    personalInfo: {
+      ...currentProfile.personalInfo,
+      ...Object.fromEntries(
+        Object.entries(importedProfile.personalInfo).filter(([, value]) => typeof value === "string" && value.trim())
+      ),
+    },
+    education: importedProfile.education.length ? withIds(importedProfile.education) : currentProfile.education,
+    experience: importedProfile.experience.length ? withIds(importedProfile.experience) : currentProfile.experience,
+    projects: importedProfile.projects.length ? withIds(importedProfile.projects) : currentProfile.projects,
+    skills: {
+      programming: mergeUniqueStrings(currentProfile.skills.programming, importedProfile.skills.programming),
+      dataAnalysis: mergeUniqueStrings(currentProfile.skills.dataAnalysis, importedProfile.skills.dataAnalysis),
+      visualization: mergeUniqueStrings(currentProfile.skills.visualization, importedProfile.skills.visualization),
+      databases: mergeUniqueStrings(currentProfile.skills.databases, importedProfile.skills.databases),
+      cloud: mergeUniqueStrings(currentProfile.skills.cloud, importedProfile.skills.cloud),
+      tools: mergeUniqueStrings(currentProfile.skills.tools, importedProfile.skills.tools),
+    },
+    certifications: importedProfile.certifications.length ? withIds(importedProfile.certifications) : currentProfile.certifications,
+    achievements: mergeUniqueStrings(currentProfile.achievements, importedProfile.achievements),
+  }
+}
+
+function getImportCounts(profile: Profile) {
+  return {
+    education: profile.education.length,
+    experience: profile.experience.length,
+    projects: profile.projects.length,
+    skills: Object.values(profile.skills).flat().length,
+    certifications: profile.certifications.length,
+    achievements: profile.achievements.length,
+  }
+}
 
 export default function ProfilePage() {
   const router = useRouter()
@@ -162,7 +220,7 @@ export default function ProfilePage() {
                 {activeSection === "links" && (
                   <LinksSection profile={profile} setProfile={setProfile} />
                 )}
-                {activeSection === "files" && <FilesSection />}
+                {activeSection === "files" && <FilesSection profile={profile} setProfile={setProfile} />}
               </motion.div>
             </AnimatePresence>
 
@@ -902,11 +960,73 @@ function LinksSection({ profile, setProfile }: { profile: Profile; setProfile: S
   )
 }
 
-function FilesSection() {
+function FilesSection({ profile, setProfile }: { profile: Profile; setProfile: SetProfile }) {
+  const [isImporting, setIsImporting] = useState(false)
+
+  const handleFilesUploaded = async (files: File[]) => {
+    const resumeFile = files[0]
+    if (!resumeFile) return
+
+    setIsImporting(true)
+
+    try {
+      const formData = new FormData()
+      formData.append("resume", resumeFile)
+
+      const response = await fetch("/api/import-profile-from-resume", {
+        method: "POST",
+        body: formData,
+      })
+      const contentType = response.headers.get("content-type") || ""
+      const data = contentType.includes("application/json")
+        ? await response.json()
+        : { error: (await response.text()).slice(0, 200) }
+
+      if (!response.ok) {
+        throw new Error(data.error || "Resume import failed")
+      }
+
+      if (!data.profile) {
+        throw new Error("Resume import did not return profile data")
+      }
+
+      const importedProfile = data.profile as Profile
+      const nextProfile = mergeProfileFromResume(profile, importedProfile)
+      const counts = getImportCounts(importedProfile)
+
+      setProfile(nextProfile)
+      saveMasterProfile(nextProfile, "resume_import")
+      toast.success(
+        `Resume imported: ${counts.experience} experience, ${counts.projects} projects, ${counts.skills} skills.`
+      )
+
+      if (data.tokenUsage) {
+        console.info("Resume import token usage", data.tokenUsage)
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Resume import failed")
+    } finally {
+      setIsImporting(false)
+    }
+  }
+
   return (
     <AnimatedCard hover={false}>
       <h2 className="text-lg font-semibold mb-6 text-foreground">Uploaded Files</h2>
-      <FileUploadZone />
+      <p className="text-sm text-muted-foreground mb-4">
+        Upload a resume to update your profile knowledge base automatically.
+      </p>
+      <FileUploadZone
+        onFilesUploaded={handleFilesUploaded}
+        accept=".pdf,.doc,.docx,.txt,.md,.text"
+        maxFiles={1}
+      />
+      {isImporting && (
+        <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Reading resume and updating your profile...
+        </div>
+      )}
     </AnimatedCard>
   )
 }

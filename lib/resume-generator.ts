@@ -1,4 +1,5 @@
 import { mockProfile } from "@/lib/data"
+import { addNotification } from "@/lib/notifications"
 
 export type ProfileData = typeof mockProfile
 
@@ -22,6 +23,7 @@ export type GeneratedResume = {
   matchedKeywords: string[]
   missingKeywords: string[]
   keywordsAdded: string[]
+  changeHighlights: string[]
   atsScore: number
   strengths: string[]
   suggestions: string[]
@@ -51,17 +53,19 @@ export type GenerateResumeApiResponse = {
   resume: GeneratedResume
   source: "groq" | "local"
   modelUsed?: string
+  tokenUsage?: ResumeTokenUsage
   warning?: string
 }
 
-type CachedGenerateResumeApiResponse = {
-  response: GenerateResumeApiResponse
-  cachedAt: number
+export type ResumeTokenUsage = {
+  provider: "groq"
+  model: string
+  apiKeyIndex: number
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
 }
 
-const RESUME_GENERATION_CACHE_KEY = "resume_generation_cache_v1"
-const RESUME_GENERATION_CACHE_LIMIT = 12
-const RESUME_GENERATION_CACHE_TTL = 1000 * 60 * 60 * 24
 const inFlightResumeRequests = new Map<string, Promise<GenerateResumeApiResponse>>()
 
 export function profileToGeneratePayload({
@@ -135,49 +139,18 @@ function getResumeRequestKey(payload: GenerateResumePayload) {
   return stableStringify(payload)
 }
 
-function readResumeGenerationCache() {
-  if (typeof window === "undefined") return {}
+function notifyFallback(response: GenerateResumeApiResponse) {
+  if (response.source !== "local" || !response.warning) return
 
-  try {
-    const value = window.localStorage.getItem(RESUME_GENERATION_CACHE_KEY)
-    return value ? (JSON.parse(value) as Record<string, CachedGenerateResumeApiResponse>) : {}
-  } catch {
-    window.localStorage.removeItem(RESUME_GENERATION_CACHE_KEY)
-    return {}
-  }
-}
-
-function getCachedResumeResponse(cacheKey: string) {
-  const cached = readResumeGenerationCache()[cacheKey]
-
-  if (!cached) return null
-  if (Date.now() - cached.cachedAt > RESUME_GENERATION_CACHE_TTL) return null
-
-  return cached.response
-}
-
-function writeResumeGenerationCache(cacheKey: string, response: GenerateResumeApiResponse) {
-  if (typeof window === "undefined") return
-
-  const cache = readResumeGenerationCache()
-  const entries = Object.entries({
-    ...cache,
-    [cacheKey]: {
-      response,
-      cachedAt: Date.now(),
-    },
+  addNotification({
+    type: "warning",
+    title: "Resume generated with fallback",
+    message: response.warning,
   })
-    .sort(([, left], [, right]) => right.cachedAt - left.cachedAt)
-    .slice(0, RESUME_GENERATION_CACHE_LIMIT)
-
-  window.localStorage.setItem(RESUME_GENERATION_CACHE_KEY, JSON.stringify(Object.fromEntries(entries)))
 }
 
 export async function requestGeneratedResume(payload: GenerateResumePayload): Promise<GenerateResumeApiResponse> {
   const cacheKey = getResumeRequestKey(payload)
-  const cachedResponse = getCachedResumeResponse(cacheKey)
-
-  if (cachedResponse) return cachedResponse
 
   const existingRequest = inFlightResumeRequests.get(cacheKey)
   if (existingRequest) return existingRequest
@@ -193,7 +166,10 @@ export async function requestGeneratedResume(payload: GenerateResumePayload): Pr
     }
 
     const data = (await response.json()) as GenerateResumeApiResponse
-    writeResumeGenerationCache(cacheKey, data)
+    if (data.tokenUsage) {
+      console.info("[resume-generation] token usage", data.tokenUsage)
+    }
+    notifyFallback(data)
     return data
   }).finally(() => {
     inFlightResumeRequests.delete(cacheKey)
@@ -518,6 +494,12 @@ export function generateResumeFromJob({
     matchedKeywords,
     missingKeywords,
     keywordsAdded,
+    changeHighlights: [
+      `Rewrote the professional summary for ${jobTitle}`,
+      `Prioritized ${selectedExperience.length} experience section${selectedExperience.length === 1 ? "" : "s"} most relevant to the job`,
+      `Selected ${selectedProjects.length} project${selectedProjects.length === 1 ? "" : "s"} aligned with the target role`,
+      `Added or emphasized ${keywordsAdded.slice(0, 5).join(", ") || "job-specific"} keywords`,
+    ],
     atsScore,
     strengths: [
       "Resume content is tailored to the job description",

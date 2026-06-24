@@ -1,8 +1,11 @@
 import Groq from "groq-sdk"
 import { NextResponse } from "next/server"
+import { appendFile, mkdir } from "node:fs/promises"
+import path from "node:path"
 import {
   GenerateResumePayload,
   GeneratedResume,
+  ResumeTokenUsage,
   generateResumeFromJob,
   payloadToProfile,
 } from "@/lib/resume-generator"
@@ -14,6 +17,40 @@ const GROQ_MODELS = [
 ] as const
 
 const MAX_OUTPUT_TOKENS = 1400
+const SYSTEM_PROMPT = "You write truthful ATS resumes and return valid JSON only."
+
+type GroqCompletionUsage = {
+  prompt_tokens?: number
+  completion_tokens?: number
+  total_tokens?: number
+}
+
+type ResumeTokenUsageLogEntry = ResumeTokenUsage & {
+  timestamp: string
+  targetRole: string
+  jobDescriptionChars: number
+}
+
+type ResumeGenerationRunLogEntry = {
+  timestamp: string
+  source: "groq"
+  provider: "groq"
+  model: string
+  apiKeyIndex: number
+  targetRole: string
+  jobDescriptionChars: number
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  input: {
+    systemPrompt: string
+    userPrompt: string
+  }
+  output: {
+    rawContent: string
+    parsedJson: Partial<GeneratedResume>
+  }
+}
 
 function buildLocalFallback(payload: GenerateResumePayload): GeneratedResume {
   return generateResumeFromJob({
@@ -40,6 +77,7 @@ Rules:
 - Rewrite bullets professionally, select 2-3 relevant projects, and add ATS keywords naturally.
 - Return 3-4 bullets for the main experience and each selected project when supported by profile data.
 - For software, AI, LLM, web, startup, API, or automation roles, emphasize supported software/product/automation work.
+- Return changeHighlights explaining the main edits made compared with the candidate profile/job input.
 - Use plain ATS formatting only. No tables, columns, icons, markdown fences, or extra commentary.
 - Return valid JSON only.
 
@@ -50,6 +88,7 @@ Return this exact JSON shape:
   "matchSummary": "Short explanation of how well the resume matches the job",
   "matchedKeywords": ["keyword"],
   "missingKeywords": ["keyword"],
+  "changeHighlights": ["Specific change made to tailor the resume"],
   "suggestions": ["suggestion"],
   "selectedAchievements": ["achievement"],
   "tailoredSkills": ["skill"],
@@ -156,6 +195,7 @@ function normalizeGroqResume(value: Partial<GeneratedResume>, fallback: Generate
     matchSummary: typeof value.matchSummary === "string" && value.matchSummary.trim() ? value.matchSummary : fallback.matchSummary,
     matchedKeywords: normalizeStringArray(value.matchedKeywords, fallback.matchedKeywords),
     missingKeywords: normalizeStringArray(value.missingKeywords, fallback.missingKeywords),
+    changeHighlights: normalizeStringArray(value.changeHighlights, fallback.changeHighlights),
     suggestions: normalizeStringArray(value.suggestions, fallback.suggestions),
     selectedAchievements: Array.from(new Set([...selectedAchievements, ...fallback.selectedAchievements])).slice(0, 5),
     tailoredSkills: normalizeStringArray(value.tailoredSkills, fallback.tailoredSkills),
@@ -189,6 +229,98 @@ function isRateLimitError(error: unknown) {
   return details.status === 429 || details.code === "rate_limit_exceeded"
 }
 
+function getGroqApiKeys() {
+  const keys = [
+    process.env.GROQ_API_KEY,
+    ...(process.env.GROQ_API_KEYS || "").split(","),
+    process.env.GROQ_API_KEY_2,
+  ]
+    .map((key) => key?.trim())
+    .filter((key): key is string => Boolean(key && key !== "your_groq_api_key_here"))
+
+  return Array.from(new Set(keys))
+}
+
+function getTokenUsage(completion: { usage?: GroqCompletionUsage }, model: string, apiKeyIndex: number): ResumeTokenUsage | undefined {
+  const usage = completion.usage
+  if (!usage) return undefined
+
+  return {
+    provider: "groq",
+    model,
+    apiKeyIndex,
+    promptTokens: usage.prompt_tokens || 0,
+    completionTokens: usage.completion_tokens || 0,
+    totalTokens: usage.total_tokens || 0,
+  }
+}
+
+async function appendJsonLine(filePath: string, value: unknown) {
+  await mkdir(path.dirname(filePath), { recursive: true })
+  await appendFile(filePath, `${JSON.stringify(value)}\n`, "utf8")
+}
+
+async function saveGenerationRunLog({
+  tokenUsage,
+  payload,
+  fallback,
+  systemPrompt,
+  userPrompt,
+  rawContent,
+  parsedJson,
+}: {
+  tokenUsage: ResumeTokenUsage | undefined
+  payload: GenerateResumePayload
+  fallback: GeneratedResume
+  systemPrompt: string
+  userPrompt: string
+  rawContent: string
+  parsedJson: Partial<GeneratedResume>
+}) {
+  if (!tokenUsage) {
+    console.info("[resume-generation] token usage unavailable")
+    return
+  }
+
+  console.info("[resume-generation] token usage", tokenUsage)
+  const timestamp = new Date().toISOString()
+  const targetRole = payload.targetRole || fallback.jobTitle
+  const jobDescriptionChars = payload.jobDescription.length
+  const tokenLogEntry: ResumeTokenUsageLogEntry = {
+    ...tokenUsage,
+    timestamp,
+    targetRole,
+    jobDescriptionChars,
+  }
+  const runLogEntry: ResumeGenerationRunLogEntry = {
+    timestamp,
+    source: "groq",
+    provider: "groq",
+    model: tokenUsage.model,
+    apiKeyIndex: tokenUsage.apiKeyIndex,
+    targetRole,
+    jobDescriptionChars,
+    inputTokens: tokenUsage.promptTokens,
+    outputTokens: tokenUsage.completionTokens,
+    totalTokens: tokenUsage.totalTokens,
+    input: {
+      systemPrompt,
+      userPrompt,
+    },
+    output: {
+      rawContent,
+      parsedJson,
+    },
+  }
+
+  try {
+    await appendJsonLine(path.join(process.cwd(), "logs", "resume-token-usage.jsonl"), tokenLogEntry)
+    await appendJsonLine(path.join(process.cwd(), "logs", "resume-generation-runs.jsonl"), runLogEntry)
+  } catch (error) {
+    console.warn("[resume-generation] failed to save generation log", error)
+  }
+}
+
 export async function POST(request: Request) {
   let payload: GenerateResumePayload
 
@@ -204,7 +336,7 @@ export async function POST(request: Request) {
 
   const fallback = buildLocalFallback(payload)
 
-  const apiKey = process.env.GROQ_API_KEY
+  const apiKeys = getGroqApiKeys()
   const groqEnabled = process.env.GROQ_API_ENABLED !== "false"
 
   if (!groqEnabled) {
@@ -215,7 +347,7 @@ export async function POST(request: Request) {
     })
   }
 
-  if (!apiKey) {
+  if (!apiKeys.length) {
     return NextResponse.json({
       resume: fallback,
       source: "local",
@@ -224,44 +356,59 @@ export async function POST(request: Request) {
   }
 
   try {
-    const groq = new Groq({ apiKey })
     let lastRateLimitMessage = ""
 
-    for (const groqModel of GROQ_MODELS) {
-      try {
-        const completion = await groq.chat.completions.create({
-          model: groqModel,
-          messages: [
-            {
-              role: "system",
-              content: "You write truthful ATS resumes and return valid JSON only.",
-            },
-            {
-              role: "user",
-              content: buildPrompt(payload, fallback),
-            },
-          ],
-          temperature: 0.35,
-          max_tokens: MAX_OUTPUT_TOKENS,
-          response_format: { type: "json_object" },
-        })
+    for (const [apiKeyIndex, apiKey] of apiKeys.entries()) {
+      const groq = new Groq({ apiKey })
 
-        const content = completion.choices[0]?.message?.content || "{}"
-        const parsed = parseGroqJson(content)
-        const resume = normalizeGroqResume(parsed, fallback, groqModel)
+      for (const groqModel of GROQ_MODELS) {
+        try {
+          const userPrompt = buildPrompt(payload, fallback)
+          const completion = await groq.chat.completions.create({
+            model: groqModel,
+            messages: [
+              {
+                role: "system",
+                content: SYSTEM_PROMPT,
+              },
+              {
+                role: "user",
+                content: userPrompt,
+              },
+            ],
+            temperature: 0.35,
+            max_tokens: MAX_OUTPUT_TOKENS,
+            response_format: { type: "json_object" },
+          })
 
-        return NextResponse.json({
-          resume,
-          source: "groq",
-          modelUsed: groqModel,
-        })
-      } catch (error) {
-        if (isRateLimitError(error)) {
-          lastRateLimitMessage = getGroqErrorDetails(error).message
-          continue
+          const tokenUsage = getTokenUsage(completion, groqModel, apiKeyIndex + 1)
+          const content = completion.choices[0]?.message?.content || "{}"
+          const parsed = parseGroqJson(content)
+          await saveGenerationRunLog({
+            tokenUsage,
+            payload,
+            fallback,
+            systemPrompt: SYSTEM_PROMPT,
+            userPrompt,
+            rawContent: content,
+            parsedJson: parsed,
+          })
+          const resume = normalizeGroqResume(parsed, fallback, groqModel)
+
+          return NextResponse.json({
+            resume,
+            source: "groq",
+            modelUsed: groqModel,
+            tokenUsage,
+          })
+        } catch (error) {
+          if (isRateLimitError(error)) {
+            lastRateLimitMessage = getGroqErrorDetails(error).message
+            continue
+          }
+
+          throw error
         }
-
-        throw error
       }
     }
 

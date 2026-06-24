@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect, useRef } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { Upload, File, X, CheckCircle2 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -30,6 +30,14 @@ export function FileUploadZone({
   const [isDragging, setIsDragging] = useState(false)
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
   const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({})
+  const uploadIntervalsRef = useRef<ReturnType<typeof setInterval>[]>([])
+
+  useEffect(() => {
+    return () => {
+      uploadIntervalsRef.current.forEach(clearInterval)
+      uploadIntervalsRef.current = []
+    }
+  }, [])
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -42,28 +50,42 @@ export function FileUploadZone({
   }, [])
 
   const simulateUpload = (file: File) => {
-    const fileId = `${file.name}-${Date.now()}`
+    const fileId = `${file.name}-${file.size}-${Date.now()}`
+    let progress = 0
     setUploadProgress(prev => ({ ...prev, [fileId]: 0 }))
 
     const interval = setInterval(() => {
-      setUploadProgress(prev => {
-        const current = prev[fileId] || 0
-        if (current >= 100) {
-          clearInterval(interval)
-          setUploadedFiles(files => [...files, {
+      progress = Math.min(progress + 10, 100)
+
+      if (progress >= 100) {
+        clearInterval(interval)
+        uploadIntervalsRef.current = uploadIntervalsRef.current.filter((item) => item !== interval)
+        setUploadedFiles(files => {
+          const alreadyUploaded = files.some((uploadedFile) => (
+            uploadedFile.name === file.name && uploadedFile.size === file.size
+          ))
+          if (alreadyUploaded) return files
+
+          return [...files, {
             id: fileId,
             name: file.name,
             type: file.type || "application/octet-stream",
             size: file.size,
             uploadDate: new Date().toLocaleDateString()
-          }])
+          }]
+        })
+        setUploadProgress(prev => {
           const next = { ...prev }
           delete next[fileId]
           return next
-        }
-        return { ...prev, [fileId]: Math.min(current + 10, 100) }
-      })
+        })
+        return
+      }
+
+      setUploadProgress(prev => ({ ...prev, [fileId]: progress }))
     }, 100)
+
+    uploadIntervalsRef.current.push(interval)
   }
 
   const handleDrop = useCallback((e: React.DragEvent) => {

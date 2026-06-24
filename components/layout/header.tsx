@@ -1,12 +1,13 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { motion } from "framer-motion"
 import { Bell, Moon, Search, Sun } from "lucide-react"
 import { useTheme } from "next-themes"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { AppNotification, getNotifications, markAllNotificationsRead, subscribeToNotifications } from "@/lib/notifications"
 
 interface HeaderProps {
   title: string
@@ -16,12 +17,39 @@ interface HeaderProps {
 export function Header({ title, subtitle }: HeaderProps) {
   const { resolvedTheme, setTheme } = useTheme()
   const [mounted, setMounted] = useState(false)
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false)
+  const [notifications, setNotifications] = useState<AppNotification[]>([])
+  const notificationsRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     setMounted(true)
   }, [])
 
+  useEffect(() => {
+    const refreshNotifications = () => setNotifications(getNotifications())
+
+    refreshNotifications()
+    return subscribeToNotifications(refreshNotifications)
+  }, [])
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!notificationsRef.current?.contains(event.target as Node)) {
+        setIsNotificationsOpen(false)
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [])
+
   const isDark = mounted && resolvedTheme === "dark"
+  const unreadCount = useMemo(() => notifications.filter((notification) => !notification.read).length, [notifications])
+
+  const openNotifications = () => {
+    setIsNotificationsOpen((isOpen) => !isOpen)
+    markAllNotificationsRead()
+  }
 
   return (
     <motion.header
@@ -59,10 +87,52 @@ export function Header({ title, subtitle }: HeaderProps) {
               className="w-64 pl-9 bg-muted/50 border-0 focus-visible:ring-1"
             />
           </div>
-          <Button variant="ghost" size="icon" className="relative">
-            <Bell className="h-5 w-5" />
-            <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-[#4f46e5] rounded-full" />
-          </Button>
+          <div className="relative" ref={notificationsRef}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="relative"
+              onClick={openNotifications}
+              aria-label="Open notifications"
+              title="Notifications"
+            >
+              <Bell className="h-5 w-5" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 min-w-5 h-5 px-1 rounded-full bg-[#4f46e5] text-[10px] font-semibold text-white flex items-center justify-center">
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              )}
+            </Button>
+
+            {isNotificationsOpen && (
+              <div className="absolute right-0 top-11 w-80 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-card shadow-lg z-50 overflow-hidden">
+                <div className="px-4 py-3 border-b border-border">
+                  <p className="text-sm font-semibold text-foreground">Notifications</p>
+                  <p className="text-xs text-muted-foreground">{notifications.length ? `${notifications.length} recent updates` : "No updates yet"}</p>
+                </div>
+                <div className="max-h-96 overflow-y-auto">
+                  {notifications.length ? (
+                    notifications.map((notification) => (
+                      <div key={notification.id} className="px-4 py-3 border-b border-border/60 last:border-0">
+                        <div className="flex items-start justify-between gap-3">
+                          <p className="text-sm font-medium text-foreground">{notification.title}</p>
+                          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{notification.type}</span>
+                        </div>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">{notification.message}</p>
+                        <p className="mt-2 text-[11px] text-muted-foreground">
+                          {new Date(notification.createdAt).toLocaleString()}
+                        </p>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                      Notifications will appear here.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
           <Avatar className="h-8 w-8 cursor-pointer">
             <AvatarFallback className="bg-primary text-primary-foreground text-sm">
               MS
