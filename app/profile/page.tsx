@@ -39,8 +39,7 @@ const sections = [
   { id: "experience", label: "Work Experience", icon: Briefcase },
   { id: "projects", label: "Projects", icon: FolderGit2 },
   { id: "skills", label: "Technical Skills", icon: Code2 },
-  // Certifications are temporarily hidden. Keep the section code below for future re-enable.
-  // { id: "certifications", label: "Certifications", icon: Award },
+  { id: "certifications", label: "Certifications", icon: Award },
   { id: "achievements", label: "Achievements", icon: Trophy },
   { id: "links", label: "Links", icon: LinkIcon },
   { id: "files", label: "Uploaded Files", icon: FileUp },
@@ -136,7 +135,7 @@ export default function ProfilePage() {
           targetRole: "General Resume",
           jobDescription:
             "PROFILE_ONLY_RESUME_REQUEST: Create a general ATS-friendly resume using only the candidate profile data. Do not tailor to a specific external job description. Prioritize the candidate's strongest profile summary, education, work experience, projects, technical skills, achievements, and certifications. Select the best projects from the profile and write truthful professional bullets based only on the provided details.",
-          template: "faang",
+          template: "modern",
           tone: "professional",
           experienceLevel: "mid",
           length: "medium",
@@ -210,10 +209,9 @@ export default function ProfilePage() {
                 {activeSection === "skills" && (
                   <SkillsSection profile={profile} setProfile={setProfile} />
                 )}
-                {/* Certifications are temporarily hidden. Keep this render path for future re-enable. */}
-                {/* {activeSection === "certifications" && (
+                {activeSection === "certifications" && (
                   <CertificationsSection profile={profile} setProfile={setProfile} />
-                )} */}
+                )}
                 {activeSection === "achievements" && (
                   <AchievementsSection profile={profile} setProfile={setProfile} />
                 )}
@@ -811,7 +809,7 @@ function SkillsSection({ profile, setProfile }: { profile: Profile; setProfile: 
   )
 }
 
-function _CertificationsSection({ profile, setProfile }: { profile: Profile; setProfile: SetProfile }) {
+function CertificationsSection({ profile, setProfile }: { profile: Profile; setProfile: SetProfile }) {
   const updateCertification = (id: string, field: keyof Profile["certifications"][number], value: string) => {
     setProfile((p) => ({
       ...p,

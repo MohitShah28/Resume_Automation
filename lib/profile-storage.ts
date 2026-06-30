@@ -1,7 +1,8 @@
-import { mockProfile } from "@/lib/data"
+import { PROFILE_KNOWLEDGE_BASE_VERSION, mockProfile } from "@/lib/data"
 import type { GeneratedResume, ProfileData } from "@/lib/resume-generator"
 
 const MASTER_PROFILE_KEY = "master_profile"
+const MASTER_PROFILE_VERSION_KEY = "master_profile_version"
 const LEGACY_PROFILE_KEY = "resumeProfile"
 const LATEST_GENERATED_RESUME_KEY = "generatedResume"
 const GENERATED_RESUMES_KEY = "generated_resumes"
@@ -30,6 +31,13 @@ function readJson<T>(key: string): T | null {
 }
 
 export function loadMasterProfile(): ProfileData {
+  const savedProfileVersion = typeof window !== "undefined" ? window.localStorage.getItem(MASTER_PROFILE_VERSION_KEY) : null
+  if (savedProfileVersion !== PROFILE_KNOWLEDGE_BASE_VERSION) {
+    window.localStorage.setItem(MASTER_PROFILE_VERSION_KEY, PROFILE_KNOWLEDGE_BASE_VERSION)
+    window.localStorage.setItem(MASTER_PROFILE_KEY, JSON.stringify(cloneProfile(mockProfile)))
+    return cloneProfile(mockProfile)
+  }
+
   const savedProfile = readJson<ProfileData>(MASTER_PROFILE_KEY) || readJson<ProfileData>(LEGACY_PROFILE_KEY)
   return cloneProfile(savedProfile || mockProfile)
 }
@@ -44,6 +52,7 @@ export function saveMasterProfile(profile: ProfileData, source: ProfileSaveSourc
   }
 
   window.localStorage.setItem(MASTER_PROFILE_KEY, JSON.stringify(cloneProfile(profile)))
+  window.localStorage.setItem(MASTER_PROFILE_VERSION_KEY, PROFILE_KNOWLEDGE_BASE_VERSION)
 }
 
 export function saveGeneratedResume(resume: GeneratedResume) {

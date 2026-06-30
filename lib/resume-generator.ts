@@ -51,14 +51,14 @@ export type GenerateResumePayload = {
 
 export type GenerateResumeApiResponse = {
   resume: GeneratedResume
-  source: "groq" | "local"
+  source: "groq" | "gemini" | "local"
   modelUsed?: string
   tokenUsage?: ResumeTokenUsage
   warning?: string
 }
 
 export type ResumeTokenUsage = {
-  provider: "groq"
+  provider: "groq" | "gemini"
   model: string
   apiKeyIndex: number
   promptTokens: number
@@ -272,12 +272,19 @@ function profileText(profile: ProfileData) {
 
 function extractKeywords(jobDescription: string) {
   const matchedBank = keywordBank.filter((keyword) => includesTerm(jobDescription, keyword))
+  const requirementTerms = Array.from(
+    jobDescription.matchAll(/\b(?:experience with|knowledge of|proficiency in|skills? in|required|preferred|familiarity with)\s+([^.;\n]+)/gi),
+    (match) => match[1]
+  )
+    .flatMap((value) => value.split(/,|\/|\band\b|\bor\b/gi))
+    .map((term) => term.trim())
+    .filter((term) => term.length > 2 && term.length < 48)
   const capitalizedTerms = Array.from(
     jobDescription.matchAll(/\b(?:[A-Z][a-zA-Z+#.]{2,})(?:\s+[A-Z][a-zA-Z+#.]{2,}){0,2}\b/g),
     (match) => match[0]
   ).filter((term) => !["The", "And", "Job", "Description", "Responsibilities", "Requirements"].includes(term))
 
-  return unique([...matchedBank, ...capitalizedTerms]).slice(0, 18)
+  return unique([...matchedBank, ...requirementTerms, ...capitalizedTerms]).slice(0, 28)
 }
 
 function inferJobTitle(jobDescription: string) {
@@ -305,22 +312,37 @@ function scoreText(text: string, keywords: string[]) {
   return keywords.reduce((score, keyword) => score + (includesTerm(text, keyword) ? 1 : 0), 0)
 }
 
-function tailorBullets(bullets: string[], keywords: string[]) {
-  const selectedKeywords = keywords.slice(0, 3)
-  const tailored = bullets.slice(0, 5).map((bullet, index) => {
+function tailorBullets(bullets: string[], keywords: string[], jobDescription: string, targetCount = 5) {
+  const selectedKeywords = keywords.slice(0, 6)
+  const roleFocus = selectedKeywords.slice(0, 3).join(", ")
+  const tailored = bullets.slice(0, targetCount).map((bullet, index) => {
     const verb = actionVerbs[index % actionVerbs.length]
     const keyword = selectedKeywords[index % Math.max(selectedKeywords.length, 1)]
     if (!keyword || includesTerm(bullet, keyword)) return bullet
-    return `${verb} ${bullet.charAt(0).toLowerCase()}${bullet.slice(1)}, supporting ${keyword}`
+    return `${verb} ${bullet.charAt(0).toLowerCase()}${bullet.slice(1)}, supporting ${keyword} and role-aligned delivery`
   })
 
-  if (tailored.length >= 4) return tailored
+  if (tailored.length >= targetCount) return tailored
 
   return [
     ...tailored,
-    "Collaborated with stakeholders to translate business requirements into practical technical solutions",
-    "Documented workflows, tested outputs, and improved repeatability for analytical and automation processes",
-  ].slice(0, 4)
+    roleFocus
+      ? `Translated requirements involving ${roleFocus} into practical deliverables, documentation, and reusable workflows`
+      : "Collaborated with stakeholders to translate business requirements into practical technical solutions",
+    includesTerm(jobDescription, "team") || includesTerm(jobDescription, "stakeholder")
+      ? "Communicated progress, tradeoffs, and results clearly with technical and non-technical stakeholders"
+      : "Documented workflows, tested outputs, and improved repeatability for analytical and automation processes",
+    includesTerm(jobDescription, "quality") || includesTerm(jobDescription, "test")
+      ? "Validated outputs through review, testing, and iteration to improve quality and reliability"
+      : "Improved project quality by organizing outputs for easier review, reuse, and decision-making",
+    includesTerm(jobDescription, "data") || includesTerm(jobDescription, "analysis")
+      ? "Cleaned, structured, and interpreted data to identify trends, explain findings, and support practical recommendations"
+      : "Organized project requirements, implementation notes, and final outputs so work could be reviewed and extended",
+    includesTerm(jobDescription, "business") || includesTerm(jobDescription, "analyst")
+      ? "Converted business questions into analysis plans, technical tasks, and concise reporting for decision makers"
+      : "Balanced technical execution with usability, maintainability, and clear communication of results",
+    "Reviewed deliverables for completeness, consistency, and alignment with stakeholder expectations before final handoff",
+  ].slice(0, targetCount)
 }
 
 function buildTailoredSkills(profile: ProfileData, jobDescription: string, keywords: string[]) {
@@ -341,7 +363,7 @@ function buildTailoredSkills(profile: ProfileData, jobDescription: string, keywo
     }))
     .sort((a, b) => b.score - a.score)
     .map(({ skill }) => skill)
-    .slice(0, 18)
+    .slice(0, 24)
 }
 
 function buildImprovedSummary(profile: ProfileData, jobTitle: string, keywords: string[]) {
@@ -353,7 +375,7 @@ function buildImprovedSummary(profile: ProfileData, jobTitle: string, keywords: 
   return `${profile.personalInfo.summary} Tailored for ${jobTitle} roles${focus ? ` with emphasis on ${focus}` : ""}. Brings hands-on experience across data cleaning, dashboards, automation, project delivery, and stakeholder-focused problem solving, with a strong ability to turn complex requirements into practical, measurable outputs.`
 }
 
-function tailorProjectHighlights(project: ProfileData["projects"][number], keywords: string[]) {
+function tailorProjectHighlights(project: ProfileData["projects"][number], keywords: string[], jobDescription: string, targetCount = 5) {
   const existingHighlights = project.highlights.length
     ? project.highlights
     : [project.description]
@@ -363,22 +385,25 @@ function tailorProjectHighlights(project: ProfileData["projects"][number], keywo
 
   const generatedHighlights = [
     relevantKeywords.length
-      ? `Applied ${relevantKeywords.slice(0, 4).join(", ")} to solve role-relevant technical and business problems`
+      ? `Applied ${relevantKeywords.slice(0, 5).join(", ")} to solve role-relevant technical and business problems`
       : "",
     "Designed reusable workflows with clear inputs, outputs, validation steps, and documentation for end users",
     "Improved project usability by organizing results into practical dashboards, reports, or repeatable analysis flows",
-    "Tested project outputs for accuracy, consistency, and readability before presenting results",
+    includesTerm(jobDescription, "deploy") || includesTerm(jobDescription, "production")
+      ? "Prepared project outputs for repeatable use with clear setup, testing, and deployment-oriented documentation"
+      : "Tested project outputs for accuracy, consistency, and readability before presenting results",
   ]
 
-  if (existingHighlights.length >= 4) return existingHighlights.slice(0, 4)
+  if (existingHighlights.length >= targetCount) return existingHighlights.slice(0, targetCount)
 
   return unique([
     ...existingHighlights,
     ...generatedHighlights,
-  ]).slice(0, 4)
+    project.description ? `Built around ${project.description.charAt(0).toLowerCase()}${project.description.slice(1)}` : "",
+  ]).slice(0, targetCount)
 }
 
-function formatResumeText(resume: Omit<GeneratedResume, "resume">) {
+export function formatResumeText(resume: Omit<GeneratedResume, "resume">) {
   const profile = resume.profile
   const skills = resume.tailoredSkills.length ? resume.tailoredSkills : [
       ...profile.skills.programming,
@@ -387,6 +412,108 @@ function formatResumeText(resume: Omit<GeneratedResume, "resume">) {
       ...profile.skills.cloud,
       ...profile.skills.tools,
     ]
+  const certificationLines = resume.selectedCertifications.map((cert) => [
+    cert.name,
+    cert.issuer,
+    cert.date,
+    cert.credentialId ? `Credential ID: ${cert.credentialId}` : "",
+  ].filter(Boolean).join(" | "))
+  const achievementLines = resume.selectedAchievements.map((achievement) => `- ${achievement}`)
+
+  if (resume.template === "university-law") {
+    return [
+      `${profile.personalInfo.firstName} ${profile.personalInfo.lastName}`.toUpperCase(),
+      `${profile.personalInfo.location} | ${profile.personalInfo.phone} | ${profile.personalInfo.email}`,
+      [profile.personalInfo.linkedin, profile.personalInfo.github, profile.personalInfo.portfolio].filter(Boolean).join(" | "),
+      "",
+      "PROFILE",
+      resume.improvedSummary,
+      "",
+      "EDUCATION",
+      ...profile.education.flatMap((edu) => [
+        edu.institution,
+        `${edu.degree} in ${edu.field} | ${edu.endDate}`,
+        edu.gpa ? `GPA: ${edu.gpa}` : "",
+        "",
+      ]),
+      "EXPERIENCE",
+      ...resume.selectedExperience.flatMap((exp) => [
+        `${exp.company} | ${exp.location}`,
+        `${exp.position} | ${exp.startDate} - ${exp.endDate}`,
+        ...exp.description.map((bullet) => `- ${bullet}`),
+        "",
+      ]),
+      "PROJECTS",
+      ...resume.selectedProjects.flatMap((project) => [
+        `${project.name} | ${project.technologies.join(", ")}`,
+        project.description,
+        ...project.highlights.map((highlight) => `- ${highlight}`),
+        "",
+      ]),
+      "TECHNICAL SKILLS",
+      unique(skills).join(", "),
+      certificationLines.length ? "" : undefined,
+      certificationLines.length ? "CERTIFICATIONS" : undefined,
+      ...certificationLines,
+      achievementLines.length ? "" : undefined,
+      achievementLines.length ? "HONORS & ACHIEVEMENTS" : undefined,
+      ...achievementLines,
+    ].filter((line) => line !== undefined).join("\n").trim()
+  }
+
+  if (resume.template === "original-cv") {
+    const expertise = unique([
+      "Business Systems Analysis",
+      "Python & SQL Programming",
+      "Project Management",
+      "Data Analysis & Reporting",
+      "Database Management",
+      "Technical Documentation",
+      "Data Visualization",
+      "Cross-Functional Collaboration",
+      ...skills,
+    ]).slice(0, 15)
+
+    return [
+      `${profile.personalInfo.firstName} ${profile.personalInfo.lastName}, M.SC.`,
+      `${resume.jobTitle !== "Target Role" ? resume.jobTitle : "Business Analyst"} | Data Specialist | Data Analyst`,
+      `${profile.personalInfo.phone} | ${profile.personalInfo.location} | ${profile.personalInfo.email} | ${profile.personalInfo.linkedin}`,
+      "",
+      "PROFESSIONAL SUMMARY",
+      resume.improvedSummary,
+      "",
+      "AREAS OF EXPERTISE",
+      expertise.map((skill) => `- ${skill}`).join("\n"),
+      "",
+      "PROFESSIONAL EXPERIENCE",
+      ...resume.selectedExperience.flatMap((exp) => [
+        `${exp.position} | ${exp.company}, ${exp.location} | ${exp.startDate} - ${exp.endDate}`,
+        ...exp.description.map((bullet) => `- ${bullet}`),
+        "",
+      ]),
+      "PROJECTS",
+      ...resume.selectedProjects.flatMap((project) => [
+        `${project.name}`,
+        `Tools: ${project.technologies.join(", ")}`,
+        ...project.highlights.map((highlight) => `- ${highlight}`),
+        "",
+      ]),
+      "EDUCATION",
+      ...profile.education.map((edu) => `${edu.degree} in ${edu.field}, ${edu.institution}${edu.gpa ? ` [${edu.gpa} GPA]` : ""}`),
+      "",
+      "TECHNICAL SKILLS",
+      `Programming Languages: ${profile.skills.programming.join(", ")}`,
+      `Business Intelligence: ${unique([...profile.skills.visualization, "MS Excel"]).join(", ")}`,
+      `Data & Machine Learning: ${profile.skills.dataAnalysis.join(", ")}`,
+      `Databases & Tools: ${unique([...profile.skills.databases, ...profile.skills.tools]).join(", ")}`,
+      certificationLines.length ? "" : undefined,
+      certificationLines.length ? "CERTIFICATIONS" : undefined,
+      ...certificationLines,
+      achievementLines.length ? "" : undefined,
+      achievementLines.length ? "HONORS & ACHIEVEMENTS" : undefined,
+      ...achievementLines,
+    ].filter((line) => line !== undefined).join("\n").trim()
+  }
 
   return [
     `${profile.personalInfo.firstName} ${profile.personalInfo.lastName}`,
@@ -413,13 +540,13 @@ function formatResumeText(resume: Omit<GeneratedResume, "resume">) {
     ]),
     "EDUCATION",
     ...profile.education.map((edu) => `${edu.degree} in ${edu.field} | ${edu.institution} | ${edu.endDate}`),
-    "",
-    "ACHIEVEMENTS",
-    ...resume.selectedAchievements.map((achievement) => `- ${achievement}`),
-    "",
-    "CERTIFICATIONS",
-    ...resume.selectedCertifications.map((cert) => `${cert.name} - ${cert.issuer} (${cert.date})`),
-  ].join("\n").trim()
+    certificationLines.length ? "" : undefined,
+    certificationLines.length ? "CERTIFICATIONS" : undefined,
+    ...certificationLines,
+    achievementLines.length ? "" : undefined,
+    achievementLines.length ? "HONORS & ACHIEVEMENTS" : undefined,
+    ...achievementLines,
+  ].filter((line) => line !== undefined).join("\n").trim()
 }
 
 export function generateResumeFromJob({
@@ -443,6 +570,11 @@ export function generateResumeFromJob({
   const missingKeywords = jobKeywords.filter((keyword) => !includesTerm(text, keyword)).slice(0, 8)
   const keywordsAdded = unique([...matchedKeywords, ...missingKeywords]).slice(0, 14)
   const tailoredSkills = buildTailoredSkills(profile, jobDescription, keywordsAdded)
+  const isDenseOnePage = template === "original-cv" || template === "university-law"
+  const experienceCount = isDenseOnePage ? Math.min(profile.experience.length, 4) : 3
+  const projectCount = isDenseOnePage ? Math.min(profile.projects.length, 4) : 3
+  const bulletCount = isDenseOnePage ? 8 : 5
+  const projectBulletCount = isDenseOnePage ? 5 : 5
   const softwareRoleBoost = (text: string) =>
     includesTerm(jobDescription, "software") || includesTerm(jobDescription, "website") || includesTerm(jobDescription, "LLM")
       ? scoreText(text, ["JavaScript", "TypeScript", "Python", "AI", "LLMs", "Automation", "Dashboard", "API", "OpenAI", "Next.js"]) * 2
@@ -451,25 +583,25 @@ export function generateResumeFromJob({
   const selectedExperience = profile.experience
     .map((exp) => ({
       ...exp,
-      description: tailorBullets(exp.description, keywordsAdded),
+      description: tailorBullets(exp.description, keywordsAdded, jobDescription, bulletCount),
       score:
         scoreText(`${exp.position} ${exp.company} ${exp.description.join(" ")}`, keywordsAdded) +
         softwareRoleBoost(`${exp.position} ${exp.company} ${exp.description.join(" ")}`),
     }))
     .sort((a, b) => b.score - a.score)
-    .slice(0, 3)
+    .slice(0, experienceCount)
     .map(({ score: _score, ...exp }) => exp)
 
   const selectedProjects = profile.projects
     .map((project) => ({
       ...project,
-      highlights: tailorProjectHighlights(project, keywordsAdded),
+      highlights: tailorProjectHighlights(project, keywordsAdded, jobDescription, projectBulletCount),
       score:
         scoreText(`${project.name} ${project.description} ${project.technologies.join(" ")} ${project.highlights.join(" ")}`, keywordsAdded) +
         softwareRoleBoost(`${project.name} ${project.description} ${project.technologies.join(" ")} ${project.highlights.join(" ")}`),
     }))
     .sort((a, b) => b.score - a.score)
-    .slice(0, 3)
+    .slice(0, projectCount)
     .map(({ score: _score, ...project }) => project)
 
   const atsScore = Math.min(98, 72 + matchedKeywords.length * 3 + Math.min(missingKeywords.length, 5) * 2)
@@ -483,13 +615,13 @@ export function generateResumeFromJob({
     tone,
     experienceLevel,
     length,
-    summary: buildImprovedSummary(profile, jobTitle, matchedKeywords),
-    improvedSummary: buildImprovedSummary(profile, jobTitle, matchedKeywords),
+    summary: buildImprovedSummary(profile, jobTitle, keywordsAdded),
+    improvedSummary: buildImprovedSummary(profile, jobTitle, keywordsAdded),
     matchSummary: `Matched ${matchedKeywords.length} job requirements from the profile and identified ${missingKeywords.length} gaps to review.`,
     selectedExperience,
     selectedProjects,
-    selectedCertifications: profile.certifications.slice(0, length === "short" ? 2 : 3),
-    selectedAchievements: profile.achievements.slice(0, 4),
+    selectedCertifications: profile.certifications.slice(0, isDenseOnePage ? 4 : length === "short" ? 2 : 4),
+    selectedAchievements: profile.achievements.slice(0, isDenseOnePage ? 8 : 6),
     tailoredSkills,
     matchedKeywords,
     missingKeywords,

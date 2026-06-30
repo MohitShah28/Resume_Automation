@@ -19,7 +19,32 @@ import { profileToGeneratePayload, requestGeneratedResume } from "@/lib/resume-g
 import { clearLatestGeneratedResume, createProfileWorkingCopy, saveGeneratedResume } from "@/lib/profile-storage"
 import { toast } from "sonner"
 
+const UNIVERSITY_LAW_FONT_FAMILY = 'Calibri, "Carlito", Arial, sans-serif'
+const ORIGINAL_CV_FONT_FAMILY = '"Times New Roman", Times, serif'
+
 const templates = [
+  {
+    id: "original-cv",
+    name: "Original CV Dense",
+    description: "Dense one-page format based on your resume",
+    preview: {
+      header: "center",
+      accent: "bg-gray-700",
+      section: "border-gray-600 text-gray-700",
+      body: ""
+    }
+  },
+  {
+    id: "university-law",
+    name: "University LLM",
+    description: "University-provided legal resume format",
+    preview: {
+      header: "center",
+      accent: "bg-gray-900",
+      section: "text-gray-950 underline underline-offset-2",
+      body: ""
+    }
+  },
   {
     id: "harvard",
     name: "Harvard Classic",
@@ -79,7 +104,7 @@ const generationSteps = [
 export default function ResumeBuilderPage() {
   const router = useRouter()
   const [jobDescription, setJobDescription] = useState("")
-  const [selectedTemplate, setSelectedTemplate] = useState("modern")
+  const [selectedTemplate, setSelectedTemplate] = useState("original-cv")
   const [isGenerating, setIsGenerating] = useState(false)
   const [currentStep, setCurrentStep] = useState(0)
   const selectedTemplateDetails = templates.find((template) => template.id === selectedTemplate) || templates[0]
@@ -162,7 +187,7 @@ export default function ResumeBuilderPage() {
                 <p className="text-sm text-muted-foreground mb-4">
                   Choose an ATS-friendly template
                 </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
                   {templates.map((template) => (
                     <motion.button
                       key={template.id}
@@ -188,13 +213,13 @@ export default function ResumeBuilderPage() {
                       
                       {/* Mini Preview */}
                       <div className="w-full aspect-[8.5/11] bg-white border border-border rounded-md mb-3 p-2">
-                        <div className={cn("space-y-1", template.id === "harvard" && "text-center")}>
+                        <div className={cn("space-y-1", (template.id === "harvard" || template.id === "university-law" || template.id === "original-cv") && "text-center")}>
                           <div className={cn(
                             "h-2 bg-foreground/80 rounded",
                             template.id === "compact" ? "w-24" : template.id === "executive" ? "w-20" : "w-16",
-                            template.id === "harvard" && "mx-auto"
+                            (template.id === "harvard" || template.id === "university-law" || template.id === "original-cv") && "mx-auto"
                           )} />
-                          <div className={cn("h-1 w-24 bg-muted rounded", template.id === "harvard" && "mx-auto")} />
+                          <div className={cn("h-1 w-24 bg-muted rounded", (template.id === "harvard" || template.id === "university-law" || template.id === "original-cv") && "mx-auto")} />
                           <div className={cn(
                             "h-px w-full mt-2",
                             template.id === "modern" ? "bg-gray-800" : "bg-border"
@@ -239,7 +264,44 @@ export default function ResumeBuilderPage() {
                     "bg-white text-gray-900 mx-auto shadow-sm border border-gray-200 min-h-[520px] max-w-[560px] p-8",
                     selectedTemplateDetails.preview.body,
                     selectedTemplate === "compact" && "p-6"
-                  )}>
+                  )}
+                  style={
+                    selectedTemplate === "university-law"
+                      ? { fontFamily: UNIVERSITY_LAW_FONT_FAMILY }
+                      : selectedTemplate === "original-cv"
+                      ? { fontFamily: ORIGINAL_CV_FONT_FAMILY }
+                      : undefined
+                  }
+                  >
+                    {selectedTemplate === "original-cv" && (
+                      <>
+                        <div className="text-center mb-3">
+                          <div className="text-2xl font-bold tracking-wide">MOHIT SHAH, M.SC.</div>
+                          <div className="text-sm text-gray-600">Business Analyst | Data Specialist | Data Analyst</div>
+                          <div className="text-xs text-gray-800 mt-1">+1 214-566-0084 | Ontario, CA | email@example.com | linkedin.com/in/mohitshah</div>
+                        </div>
+                        <TemplateRows
+                          sectionClass="border-gray-600 text-gray-700"
+                          sections={["Professional Summary", "Areas of Expertise", "Professional Experience", "Project", "Education", "Technical Skills"]}
+                          compact
+                        />
+                      </>
+                    )}
+
+                    {selectedTemplate === "university-law" && (
+                      <>
+                        <div className="text-center mb-5">
+                          <div className="text-2xl font-bold">MOHIT SHAH</div>
+                          <div className="text-xs text-gray-700 mt-1">Ontario, CA | (555) 123-4567 | email@example.com</div>
+                        </div>
+                        <TemplateRows
+                          sectionClass="text-gray-950 underline underline-offset-2"
+                          sections={["Education", "Experience", "Projects", "Technical Skills"]}
+                          university
+                        />
+                      </>
+                    )}
+
                     {selectedTemplate === "harvard" && (
                       <>
                         <div className="text-center border-b-2 border-gray-900 pb-4 mb-4">
@@ -398,24 +460,41 @@ function TemplateRows({
   sectionClass,
   titleClass,
   compact = false,
+  sections: sectionsOverride,
+  university = false,
 }: {
   sectionClass: string
   titleClass?: string
   compact?: boolean
+  sections?: string[]
+  university?: boolean
 }) {
-  const sections = compact
+  const sections = sectionsOverride || (compact
     ? ["Summary", "Skills", "Experience", "Projects", "Education"]
-    : ["Professional Summary", "Technical Skills", "Professional Experience", "Projects", "Education"]
+    : ["Professional Summary", "Technical Skills", "Professional Experience", "Projects", "Education"])
 
   return (
     <>
       {sections.map((section, index) => (
-        <div key={section} className={compact ? "mb-3" : "mb-4"}>
-          <div className={cn("text-xs font-bold uppercase border-b pb-1 mb-2", sectionClass, titleClass)}>
+        <div key={section} className={compact || university ? "mb-3" : "mb-4"}>
+          <div className={cn("text-xs font-bold uppercase pb-1 mb-2", !university && "border-b", sectionClass, titleClass)}>
             {section}
           </div>
-          <div className={compact ? "space-y-1" : "space-y-1.5"}>
-            {index === 0 ? (
+          <div className={compact || university ? "space-y-1" : "space-y-1.5"}>
+            {university ? (
+              <>
+                <div className="flex justify-between gap-4">
+                  <div className="h-2.5 bg-gray-700 rounded w-5/12" />
+                  <div className="h-2 bg-gray-300 rounded w-3/12" />
+                </div>
+                {index > 0 && (
+                  <>
+                    <div className="h-2 bg-gray-300 rounded w-full" />
+                    <div className="h-2 bg-gray-300 rounded w-10/12" />
+                  </>
+                )}
+              </>
+            ) : index === 0 ? (
               <>
                 <div className="h-2 bg-gray-300 rounded w-full" />
                 <div className="h-2 bg-gray-300 rounded w-11/12" />

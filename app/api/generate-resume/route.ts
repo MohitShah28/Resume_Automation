@@ -6,6 +6,7 @@ import {
   GenerateResumePayload,
   GeneratedResume,
   ResumeTokenUsage,
+  formatResumeText,
   generateResumeFromJob,
   payloadToProfile,
 } from "@/lib/resume-generator"
@@ -16,13 +17,30 @@ const GROQ_MODELS = [
   "openai/gpt-oss-20b",
 ] as const
 
-const MAX_OUTPUT_TOKENS = 1400
+const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
+const MAX_OUTPUT_TOKENS = 3600
 const SYSTEM_PROMPT = "You write truthful ATS resumes and return valid JSON only."
 
 type GroqCompletionUsage = {
   prompt_tokens?: number
   completion_tokens?: number
   total_tokens?: number
+}
+
+type GeminiGenerateContentResponse = {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{ text?: string }>
+    }
+  }>
+  usageMetadata?: {
+    promptTokenCount?: number
+    candidatesTokenCount?: number
+    totalTokenCount?: number
+  }
+  error?: {
+    message?: string
+  }
 }
 
 type ResumeTokenUsageLogEntry = ResumeTokenUsage & {
@@ -33,8 +51,8 @@ type ResumeTokenUsageLogEntry = ResumeTokenUsage & {
 
 type ResumeGenerationRunLogEntry = {
   timestamp: string
-  source: "groq"
-  provider: "groq"
+  source: ResumeTokenUsage["provider"]
+  provider: ResumeTokenUsage["provider"]
   model: string
   apiKeyIndex: number
   targetRole: string
@@ -52,6 +70,16 @@ type ResumeGenerationRunLogEntry = {
   }
 }
 
+type GoogleSearchItem = {
+  title?: string
+  link?: string
+  snippet?: string
+}
+
+type GoogleSearchResponse = {
+  items?: GoogleSearchItem[]
+}
+
 function buildLocalFallback(payload: GenerateResumePayload): GeneratedResume {
   return generateResumeFromJob({
     profile: payloadToProfile(payload),
@@ -67,18 +95,74 @@ function truncateText(value: string, maxLength = 6000) {
   return value.length > maxLength ? `${value.slice(0, maxLength)}\n[Job description truncated for token limits]` : value
 }
 
-function buildPrompt(payload: GenerateResumePayload, fallback: GeneratedResume) {
+function cleanForQuery(value: string) {
+  return value.replace(/[^\w\s.+#-]/g, " ").replace(/\s+/g, " ").trim()
+}
+
+async function getGoogleJobContext(payload: GenerateResumePayload, fallback: GeneratedResume) {
+  if (process.env.GOOGLE_SEARCH_ENABLED === "false") return ""
+
+  const apiKey = process.env.GOOGLE_SEARCH_API_KEY?.trim()
+  const searchEngineId = process.env.GOOGLE_SEARCH_ENGINE_ID?.trim()
+  if (!apiKey || !searchEngineId) return ""
+
+  const queryParts = [
+    payload.targetRole || fallback.jobTitle,
+    fallback.company !== "Target Company" ? fallback.company : "",
+    "job responsibilities required skills interview resume",
+  ].filter(Boolean)
+  const query = cleanForQuery(queryParts.join(" "))
+  if (!query) return ""
+
+  const searchUrl = new URL("https://www.googleapis.com/customsearch/v1")
+  searchUrl.searchParams.set("key", apiKey)
+  searchUrl.searchParams.set("cx", searchEngineId)
+  searchUrl.searchParams.set("q", query)
+  searchUrl.searchParams.set("num", "5")
+
+  try {
+    const response = await fetch(searchUrl, { next: { revalidate: 60 * 60 * 24 } })
+    if (!response.ok) return ""
+
+    const data = (await response.json()) as GoogleSearchResponse
+    const snippets = (data.items || [])
+      .slice(0, 5)
+      .map((item, index) => {
+        const title = item.title?.trim()
+        const snippet = item.snippet?.replace(/\s+/g, " ").trim()
+        const link = item.link?.trim()
+        return [title ? `${index + 1}. ${title}` : `${index + 1}. Google result`, snippet, link].filter(Boolean).join(" - ")
+      })
+      .filter(Boolean)
+
+    return snippets.length ? snippets.join("\n") : ""
+  } catch (error) {
+    console.warn("[resume-generation] Google enrichment unavailable", error)
+    return ""
+  }
+}
+
+function buildPrompt(payload: GenerateResumePayload, fallback: GeneratedResume, googleContext: string) {
   return `
-Create a concise, one-page ATS resume tailored to the job.
+Create a content-rich, one-page ATS resume tailored to the job.
 
 Rules:
 - Use only truthful candidate data. Do not invent companies, degrees, dates, metrics, certifications, or work experience.
 - If the job starts with PROFILE_ONLY_RESUME_REQUEST, make a strong general resume from the profile.
-- Rewrite bullets professionally, select 2-3 relevant projects, and add ATS keywords naturally.
-- Return 3-4 bullets for the main experience and each selected project when supported by profile data.
+- Rewrite bullets professionally, select relevant projects, and add ATS keywords naturally.
+- Return full, substantive content when supported by the candidate profile: 6-8 bullets for the strongest experience entries and 4-5 bullets for each selected project.
+- Make bullets specific, action-oriented, and outcome-focused. Prefer what was built, analyzed, automated, improved, tested, deployed, or presented.
 - For software, AI, LLM, web, startup, API, or automation roles, emphasize supported software/product/automation work.
 - Return changeHighlights explaining the main edits made compared with the candidate profile/job input.
 - Use plain ATS formatting only. No tables, columns, icons, markdown fences, or extra commentary.
+- If template is "university-law", favor a university resume structure: PROFILE, EDUCATION, EXPERIENCE, PROJECTS, and TECHNICAL SKILLS. Keep education before experience, but make the content full enough to fill one page with supported details.
+- For template "university-law", include 6-8 experience bullets, 3-5 bullets for each relevant project, a strong 3-4 sentence profile, and a focused technical skills section. Do not create generic catch-all sections.
+- If template is "original-cv", favor this structure: PROFESSIONAL SUMMARY, AREAS OF EXPERTISE, PROFESSIONAL EXPERIENCE, PROJECTS, EDUCATION, TECHNICAL SKILLS. Make the content dense enough to visually fill one full page with minimal whitespace.
+- For template "original-cv", write a 3-4 sentence professional summary, 12-15 areas of expertise, include all relevant experience entries, and prefer fuller bullets over short generic bullets.
+- Certifications and achievements must come only from the candidate data arrays. If those arrays are empty, do not mention or create those sections.
+- If the candidate has real certifications, include a dedicated CERTIFICATIONS section with name, issuer, date, and credential ID only when available.
+- If the candidate has real awards, honors, publications, or measurable achievements, include a dedicated HONORS & ACHIEVEMENTS section. Do not show these sections when the arrays are empty.
+- Google context may be used only to understand public role/company language and keywords. Do not add unsupported candidate claims from Google.
 - Return valid JSON only.
 
 Return this exact JSON shape:
@@ -132,6 +216,12 @@ ${JSON.stringify({
 Target role:
 ${payload.targetRole || fallback.jobTitle}
 
+Selected template:
+${payload.template || fallback.template}
+
+Google/public context:
+${googleContext || "No Google enrichment configured or available."}
+
 Job description:
 ${truncateText(payload.jobDescription)}
 `
@@ -158,21 +248,28 @@ function parseGroqJson(content: string) {
   }
 }
 
+function parseJsonContent(content: string) {
+  return parseGroqJson(content)
+}
+
 function normalizeStringArray(value: unknown, fallback: string[]) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : fallback
 }
 
 function normalizeProjects(value: Partial<GeneratedResume>["selectedProjects"], fallback: GeneratedResume) {
+  const isDenseOnePage = fallback.template === "original-cv" || fallback.template === "university-law"
+  const projectLimit = isDenseOnePage ? 4 : 3
+  const highlightLimit = isDenseOnePage ? 5 : 4
   const selected = Array.isArray(value) && value.length ? value : fallback.selectedProjects
   const merged = [...selected]
 
   for (const project of fallback.selectedProjects) {
     const alreadyAdded = merged.some((item) => item.id === project.id || item.name === project.name)
     if (!alreadyAdded) merged.push(project)
-    if (merged.length >= 3) break
+    if (merged.length >= projectLimit) break
   }
 
-  return merged.slice(0, 3).map((project) => {
+  return merged.slice(0, projectLimit).map((project) => {
     const fallbackProject = fallback.selectedProjects.find((item) => item.id === project.id || item.name === project.name)
     const highlights = Array.isArray(project.highlights) && project.highlights.length ? project.highlights : fallbackProject?.highlights || []
 
@@ -180,32 +277,66 @@ function normalizeProjects(value: Partial<GeneratedResume>["selectedProjects"], 
       ...fallbackProject,
       ...project,
       technologies: Array.isArray(project.technologies) && project.technologies.length ? project.technologies : fallbackProject?.technologies || [],
-      highlights: Array.from(new Set([...highlights, ...(fallbackProject?.highlights || [])])).slice(0, 4),
+      highlights: Array.from(new Set([...highlights, ...(fallbackProject?.highlights || [])])).slice(0, highlightLimit),
+    }
+  })
+}
+
+function normalizeExperience(value: Partial<GeneratedResume>["selectedExperience"], fallback: GeneratedResume) {
+  const isDenseOnePage = fallback.template === "original-cv" || fallback.template === "university-law"
+  const experienceLimit = isDenseOnePage ? 4 : 3
+  const bulletLimit = isDenseOnePage ? 8 : 5
+  const selected = Array.isArray(value) && value.length ? value : fallback.selectedExperience
+  const merged = [...selected]
+
+  for (const experience of fallback.selectedExperience) {
+    const alreadyAdded = merged.some((item) => item.id === experience.id || `${item.company}-${item.position}` === `${experience.company}-${experience.position}`)
+    if (!alreadyAdded) merged.push(experience)
+    if (merged.length >= experienceLimit) break
+  }
+
+  return merged.slice(0, experienceLimit).map((experience) => {
+    const fallbackExperience = fallback.selectedExperience.find(
+      (item) => item.id === experience.id || `${item.company}-${item.position}` === `${experience.company}-${experience.position}`
+    )
+    const description = Array.isArray(experience.description) && experience.description.length
+      ? experience.description
+      : fallbackExperience?.description || []
+
+    return {
+      ...fallbackExperience,
+      ...experience,
+      description: Array.from(new Set([...description, ...(fallbackExperience?.description || [])])).slice(0, bulletLimit),
     }
   })
 }
 
 function normalizeGroqResume(value: Partial<GeneratedResume>, fallback: GeneratedResume, modelUsed: string): GeneratedResume {
-  const selectedAchievements = normalizeStringArray(value.selectedAchievements, fallback.selectedAchievements)
+  const isDenseOnePage = fallback.template === "original-cv" || fallback.template === "university-law"
 
-  return {
+  const normalizedResume: GeneratedResume = {
     ...fallback,
-    resume: typeof value.resume === "string" && value.resume.trim() ? value.resume : fallback.resume,
+    resume: fallback.resume,
     atsScore: typeof value.atsScore === "number" ? Math.max(0, Math.min(100, value.atsScore)) : fallback.atsScore,
     matchSummary: typeof value.matchSummary === "string" && value.matchSummary.trim() ? value.matchSummary : fallback.matchSummary,
     matchedKeywords: normalizeStringArray(value.matchedKeywords, fallback.matchedKeywords),
     missingKeywords: normalizeStringArray(value.missingKeywords, fallback.missingKeywords),
     changeHighlights: normalizeStringArray(value.changeHighlights, fallback.changeHighlights),
     suggestions: normalizeStringArray(value.suggestions, fallback.suggestions),
-    selectedAchievements: Array.from(new Set([...selectedAchievements, ...fallback.selectedAchievements])).slice(0, 5),
-    tailoredSkills: normalizeStringArray(value.tailoredSkills, fallback.tailoredSkills),
-    selectedExperience: Array.isArray(value.selectedExperience) && value.selectedExperience.length ? value.selectedExperience : fallback.selectedExperience,
+    selectedAchievements: fallback.selectedAchievements.slice(0, isDenseOnePage ? 8 : 5),
+    tailoredSkills: normalizeStringArray(value.tailoredSkills, fallback.tailoredSkills).slice(0, isDenseOnePage ? 36 : 24),
+    selectedExperience: normalizeExperience(value.selectedExperience, fallback),
     selectedProjects: normalizeProjects(value.selectedProjects, fallback),
     improvedSummary: typeof value.improvedSummary === "string" && value.improvedSummary.trim() ? value.improvedSummary : fallback.improvedSummary,
     summary: typeof value.improvedSummary === "string" && value.improvedSummary.trim() ? value.improvedSummary : fallback.summary,
     keywordsAdded: normalizeStringArray(value.matchedKeywords, fallback.keywordsAdded),
     modelUsed,
     generatedAt: new Date().toISOString(),
+  }
+
+  return {
+    ...normalizedResume,
+    resume: formatResumeText(normalizedResume),
   }
 }
 
@@ -241,6 +372,15 @@ function getGroqApiKeys() {
   return Array.from(new Set(keys))
 }
 
+function getGeminiApiKey() {
+  const apiKey = process.env.GEMINI_API_KEY?.trim()
+  return apiKey && apiKey !== "your_gemini_api_key_here" ? apiKey : ""
+}
+
+function getGeminiModel() {
+  return process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL
+}
+
 function getTokenUsage(completion: { usage?: GroqCompletionUsage }, model: string, apiKeyIndex: number): ResumeTokenUsage | undefined {
   const usage = completion.usage
   if (!usage) return undefined
@@ -252,6 +392,82 @@ function getTokenUsage(completion: { usage?: GroqCompletionUsage }, model: strin
     promptTokens: usage.prompt_tokens || 0,
     completionTokens: usage.completion_tokens || 0,
     totalTokens: usage.total_tokens || 0,
+  }
+}
+
+function getGeminiTokenUsage(response: GeminiGenerateContentResponse, model: string): ResumeTokenUsage | undefined {
+  const usage = response.usageMetadata
+  if (!usage) return undefined
+
+  return {
+    provider: "gemini",
+    model,
+    apiKeyIndex: 1,
+    promptTokens: usage.promptTokenCount || 0,
+    completionTokens: usage.candidatesTokenCount || 0,
+    totalTokens: usage.totalTokenCount || 0,
+  }
+}
+
+async function requestGeminiResume({
+  apiKey,
+  model,
+  payload,
+  fallback,
+  googleContext,
+}: {
+  apiKey: string
+  model: string
+  payload: GenerateResumePayload
+  fallback: GeneratedResume
+  googleContext: string
+}) {
+  const userPrompt = buildPrompt(payload, fallback, googleContext)
+  const url = new URL(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`)
+  url.searchParams.set("key", apiKey)
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      systemInstruction: {
+        parts: [{ text: SYSTEM_PROMPT }],
+      },
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: userPrompt }],
+        },
+      ],
+      generationConfig: {
+        temperature: 0.35,
+        maxOutputTokens: MAX_OUTPUT_TOKENS,
+        responseMimeType: "application/json",
+      },
+    }),
+  })
+
+  const data = (await response.json().catch(() => ({}))) as GeminiGenerateContentResponse
+  if (!response.ok) {
+    throw new Error(data.error?.message || `Gemini request failed with status ${response.status}`)
+  }
+
+  const content = data.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "{}"
+  const parsed = parseJsonContent(content)
+  const tokenUsage = getGeminiTokenUsage(data, model)
+  await saveGenerationRunLog({
+    tokenUsage,
+    payload,
+    fallback,
+    systemPrompt: SYSTEM_PROMPT,
+    userPrompt,
+    rawContent: content,
+    parsedJson: parsed,
+  })
+
+  return {
+    resume: normalizeGroqResume(parsed, fallback, model),
+    tokenUsage,
   }
 }
 
@@ -294,8 +510,8 @@ async function saveGenerationRunLog({
   }
   const runLogEntry: ResumeGenerationRunLogEntry = {
     timestamp,
-    source: "groq",
-    provider: "groq",
+    source: tokenUsage.provider,
+    provider: tokenUsage.provider,
     model: tokenUsage.model,
     apiKeyIndex: tokenUsage.apiKeyIndex,
     targetRole,
@@ -338,12 +554,42 @@ export async function POST(request: Request) {
 
   const apiKeys = getGroqApiKeys()
   const groqEnabled = process.env.GROQ_API_ENABLED !== "false"
+  const geminiApiKey = getGeminiApiKey()
+  const geminiEnabled = process.env.GEMINI_API_ENABLED !== "false"
+  const googleContext = await getGoogleJobContext(payload, fallback)
+  const providerWarnings: string[] = []
+
+  if (geminiEnabled && geminiApiKey) {
+    try {
+      const geminiModel = getGeminiModel()
+      const { resume, tokenUsage } = await requestGeminiResume({
+        apiKey: geminiApiKey,
+        model: geminiModel,
+        payload,
+        fallback,
+        googleContext,
+      })
+
+      return NextResponse.json({
+        resume,
+        source: "gemini",
+        modelUsed: geminiModel,
+        tokenUsage,
+      })
+    } catch (error) {
+      providerWarnings.push(error instanceof Error ? `Gemini failed: ${error.message}` : "Gemini failed.")
+    }
+  } else if (!geminiEnabled) {
+    providerWarnings.push("Gemini API is disabled.")
+  } else {
+    providerWarnings.push("GEMINI_API_KEY is not configured.")
+  }
 
   if (!groqEnabled) {
     return NextResponse.json({
       resume: fallback,
       source: "local",
-      warning: "Groq API is disabled. Used local generator fallback.",
+      warning: [...providerWarnings, "Groq API is disabled. Used local generator fallback."].join(" "),
     })
   }
 
@@ -351,7 +597,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       resume: fallback,
       source: "local",
-      warning: "GROQ_API_KEY is not configured. Used local generator fallback.",
+      warning: [...providerWarnings, "GROQ_API_KEY is not configured. Used local generator fallback."].join(" "),
     })
   }
 
@@ -363,7 +609,7 @@ export async function POST(request: Request) {
 
       for (const groqModel of GROQ_MODELS) {
         try {
-          const userPrompt = buildPrompt(payload, fallback)
+          const userPrompt = buildPrompt(payload, fallback, googleContext)
           const completion = await groq.chat.completions.create({
             model: groqModel,
             messages: [
@@ -416,14 +662,16 @@ export async function POST(request: Request) {
       resume: fallback,
       source: "local",
       warning: lastRateLimitMessage
-        ? `Groq rate limit reached. Used local generator fallback. ${lastRateLimitMessage}`
-        : "Groq rate limit reached. Used local generator fallback.",
+        ? [...providerWarnings, `Groq rate limit reached. Used local generator fallback. ${lastRateLimitMessage}`].join(" ")
+        : [...providerWarnings, "Groq rate limit reached. Used local generator fallback."].join(" "),
     })
   } catch (error) {
     return NextResponse.json({
       resume: fallback,
       source: "local",
-      warning: error instanceof Error ? `Groq failed: ${error.message}` : "Groq failed. Used local generator fallback.",
+      warning: error instanceof Error
+        ? [...providerWarnings, `Groq failed: ${error.message}`].join(" ")
+        : [...providerWarnings, "Groq failed. Used local generator fallback."].join(" "),
     })
   }
 }

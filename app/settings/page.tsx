@@ -31,7 +31,7 @@ export default function SettingsPage() {
   const { theme, setTheme } = useTheme()
   const [mounted, setMounted] = useState(false)
   const [settings, setSettings] = useState({
-    defaultTemplate: "faang",
+    defaultTemplate: "modern",
     defaultLength: "medium",
     exportFormat: "pdf",
     emailNotifications: true,
@@ -106,10 +106,11 @@ export default function SettingsPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="harvard">Harvard</SelectItem>
-                    <SelectItem value="faang">FAANG</SelectItem>
-                    <SelectItem value="consulting">Consulting</SelectItem>
-                    <SelectItem value="corporate">Corporate</SelectItem>
+                    <SelectItem value="university-law">University LLM</SelectItem>
+                    <SelectItem value="harvard">Harvard Classic</SelectItem>
+                    <SelectItem value="modern">Clean Professional</SelectItem>
+                    <SelectItem value="executive">Executive Serif</SelectItem>
+                    <SelectItem value="compact">Compact One-Page</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

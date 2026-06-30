@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { motion } from "framer-motion"
 import {
   Download,
@@ -34,7 +34,26 @@ const fallbackResume = generateResumeFromJob({
   length: "medium",
 })
 
+const UNIVERSITY_LAW_FONT_FAMILY = 'Calibri, "Carlito", Arial, sans-serif'
+const ORIGINAL_CV_FONT_FAMILY = '"Times New Roman", Times, serif'
+
 const templateStyles = {
+  "original-cv": {
+    body: "",
+    header: "text-center mb-2",
+    name: "font-bold text-gray-950 tracking-wide",
+    contact: "text-gray-800",
+    section: "text-gray-700 uppercase border-b border-gray-600",
+    itemTitle: "font-bold text-gray-950",
+  },
+  "university-law": {
+    body: "",
+    header: "text-center mb-4",
+    name: "font-bold text-gray-950 uppercase",
+    contact: "text-gray-700",
+    section: "text-gray-950 uppercase underline underline-offset-2",
+    itemTitle: "font-bold text-gray-950",
+  },
   harvard: {
     body: "font-serif",
     header: "text-center border-b-2 border-gray-900 pb-3 mb-3",
@@ -71,6 +90,7 @@ const templateStyles = {
 
 type TemplateId = keyof typeof templateStyles
 type ResumeProject = GeneratedResume["selectedProjects"][number]
+type ResumeCertification = GeneratedResume["selectedCertifications"][number]
 
 const fallbackTemplateId: TemplateId = "modern"
 const RESUME_PAGE_WIDTH = 8.5 * 96
@@ -287,12 +307,42 @@ function createZipBlob(files: { name: string; content: string }[]) {
   })
 }
 
-function createDocxBlob(text: string) {
+function getDocxParagraph(line: string, templateId: TemplateId) {
+  const trimmed = line.trim()
+  const isUniversityLaw = templateId === "university-law"
+  const isName = isUniversityLaw && /^[A-Z][A-Z\s.'-]+$/.test(trimmed) && trimmed.length > 2
+  const isHeading = /^[A-Z][A-Z\s&]+$/.test(trimmed) && trimmed.length > 2
+  const isBullet = trimmed.startsWith("- ")
+  const paragraphProps = [
+    '<w:spacing w:after="0" w:line="240" w:lineRule="auto"/>',
+    isName ? '<w:jc w:val="center"/>' : "",
+    isUniversityLaw && line.includes("\t") ? '<w:tabs><w:tab w:val="right" w:pos="9360"/></w:tabs>' : "",
+    isBullet ? '<w:ind w:left="720" w:hanging="360"/>' : "",
+  ].join("")
+  const runProps = [
+    isName ? '<w:b/><w:sz w:val="28"/><w:szCs w:val="28"/>' : "",
+    isHeading ? '<w:b/><w:u w:val="single"/>' : "",
+  ].join("")
+  const bulletText = isBullet ? `• ${trimmed.slice(2)}` : line
+  const textRuns = bulletText.split("\t").map((part, index) => (
+    `${index > 0 ? "<w:tab/>" : ""}<w:t xml:space="preserve">${escapeXml(part)}</w:t>`
+  )).join("")
+
+  return `<w:p><w:pPr>${paragraphProps}</w:pPr><w:r><w:rPr>${runProps}</w:rPr>${textRuns}</w:r></w:p>`
+}
+
+function createDocxBlob(text: string, templateId: TemplateId) {
   const paragraphs = text.split("\n").map((line) => {
-    const isHeading = /^[A-Z][A-Z\s&]+$/.test(line.trim()) && line.trim().length > 2
-    const runProps = isHeading ? "<w:rPr><w:b/></w:rPr>" : ""
-    return `<w:p><w:r>${runProps}<w:t xml:space="preserve">${escapeXml(line)}</w:t></w:r></w:p>`
+    return getDocxParagraph(line, templateId)
   }).join("")
+  const margins = templateId === "university-law"
+    ? '<w:pgMar w:top="1080" w:right="1080" w:bottom="1080" w:left="1080"/>'
+    : '<w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720"/>'
+  const font = templateId === "university-law"
+    ? "Calibri"
+    : templateId === "original-cv"
+    ? "Times New Roman"
+    : "Arial"
 
   return createZipBlob([
     {
@@ -305,7 +355,11 @@ function createDocxBlob(text: string) {
     },
     {
       name: "word/document.xml",
-      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${paragraphs}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720"/></w:sectPr></w:body></w:document>`,
+      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${paragraphs}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>${margins}</w:sectPr></w:body></w:document>`,
+    },
+    {
+      name: "word/styles.xml",
+      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${font}" w:hAnsi="${font}"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults></w:styles>`,
     },
   ])
 }
@@ -368,6 +422,8 @@ function buildDownloadText({
   displayProjects: ResumeProject[]
 }) {
   const profile = generatedResume.profile
+  const certificationLines = generatedResume.selectedCertifications.map(formatCertification)
+  const achievementLines = generatedResume.selectedAchievements.map((achievement) => `- ${achievement}`)
 
   return [
     `${profile.personalInfo.firstName} ${profile.personalInfo.lastName}`,
@@ -397,7 +453,433 @@ function buildDownloadText({
       `${edu.degree} in ${edu.field} | ${edu.institution} | ${edu.endDate}`,
       edu.gpa ? `GPA: ${edu.gpa}` : "",
     ]),
+    certificationLines.length ? "" : undefined,
+    certificationLines.length ? "CERTIFICATIONS" : undefined,
+    ...certificationLines,
+    achievementLines.length ? "" : undefined,
+    achievementLines.length ? "HONORS & ACHIEVEMENTS" : undefined,
+    ...achievementLines,
   ].filter((line) => line !== undefined).join("\n").trim()
+}
+
+function buildUniversityLawDownloadText({
+  generatedResume,
+  tailoredSkills,
+  displayProjects,
+}: {
+  generatedResume: GeneratedResume
+  tailoredSkills: string[]
+  displayProjects: ResumeProject[]
+}) {
+  const profile = generatedResume.profile
+  const contact = [
+    profile.personalInfo.location,
+    profile.personalInfo.phone,
+    profile.personalInfo.email,
+  ].filter(Boolean).join(" | ")
+  const links = [
+    profile.personalInfo.linkedin,
+    profile.personalInfo.github,
+    profile.personalInfo.portfolio,
+  ].filter(Boolean).join(" | ")
+  const certificationLines = generatedResume.selectedCertifications.map(formatCertification)
+  const achievementLines = generatedResume.selectedAchievements.map((achievement) => `- ${achievement}`)
+  return [
+    `${profile.personalInfo.firstName} ${profile.personalInfo.lastName}`.toUpperCase(),
+    contact,
+    links,
+    "",
+    "PROFILE",
+    generatedResume.improvedSummary || generatedResume.summary,
+    "",
+    "EDUCATION",
+    ...profile.education.flatMap((edu) => [
+      edu.institution,
+      `${edu.degree} in ${edu.field}\t${edu.endDate}`,
+      edu.gpa ? `GPA:\t${edu.gpa}` : "",
+      "",
+    ]),
+    "EXPERIENCE",
+    ...generatedResume.selectedExperience.flatMap((exp) => [
+      `${exp.company}\t${exp.location}`,
+      `${exp.position}\t${exp.startDate} - ${exp.endDate}`,
+      ...exp.description.map((bullet) => `- ${bullet}`),
+      "",
+    ]),
+    displayProjects.length ? "PROJECTS" : "",
+    ...displayProjects.flatMap((project) => [
+      `${project.name}\t${project.technologies.slice(0, 8).join(", ")}`,
+      project.description,
+      ...project.highlights.map((highlight) => `- ${highlight}`),
+      "",
+    ]),
+    "TECHNICAL SKILLS",
+    tailoredSkills.join(", "),
+    certificationLines.length ? "" : undefined,
+    certificationLines.length ? "CERTIFICATIONS" : undefined,
+    ...certificationLines,
+    achievementLines.length ? "" : undefined,
+    achievementLines.length ? "HONORS & ACHIEVEMENTS" : undefined,
+    ...achievementLines,
+  ].filter((line) => line !== undefined).join("\n").trim()
+}
+
+function formatCertification(cert: ResumeCertification) {
+  return [
+    cert.name,
+    cert.issuer,
+    cert.date,
+    cert.credentialId ? `Credential ID: ${cert.credentialId}` : "",
+  ].filter(Boolean).join(" | ")
+}
+
+function UniversitySection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="mb-2.5" style={{ pageBreakInside: "avoid" }}>
+      <h2
+        className="font-bold uppercase underline underline-offset-2 text-gray-950"
+        style={{ fontSize: "11.2px", margin: "0 0 0.24em 0" }}
+      >
+        {title}
+      </h2>
+      {children}
+    </section>
+  )
+}
+
+function UniversityLawResume({
+  generatedResume,
+  tailoredSkills,
+  displayProjects,
+  isSummaryGenerated,
+  isSkillGenerated,
+  isExperienceBulletGenerated,
+  isProjectHighlightGenerated,
+}: {
+  generatedResume: GeneratedResume
+  tailoredSkills: string[]
+  displayProjects: ResumeProject[]
+  isSummaryGenerated: boolean
+  isSkillGenerated: (skill: string) => boolean
+  isExperienceBulletGenerated: (experienceId: string, bullet: string) => boolean
+  isProjectHighlightGenerated: (projectId: string, projectName: string, highlight: string) => boolean
+}) {
+  const profile = generatedResume.profile
+  const contact = [
+    profile.personalInfo.location,
+    profile.personalInfo.phone,
+    profile.personalInfo.email,
+  ].filter(Boolean).join(" | ")
+  const links = [
+    profile.personalInfo.linkedin,
+    profile.personalInfo.github,
+    profile.personalInfo.portfolio,
+  ].filter(Boolean).join(" | ")
+
+  return (
+    <div
+      className="text-gray-950"
+      style={{ fontFamily: UNIVERSITY_LAW_FONT_FAMILY, fontSize: "10.95px", lineHeight: 1.24 }}
+    >
+      <header className="text-center mb-3.5" style={{ pageBreakInside: "avoid" }}>
+        <h1 className="font-bold uppercase" style={{ fontSize: "14px", margin: 0 }}>
+          {profile.personalInfo.firstName} {profile.personalInfo.lastName}
+        </h1>
+        <p className="text-gray-700" style={{ margin: "0.2em 0 0 0" }}>{contact}</p>
+        {links && <p className="text-gray-700" style={{ margin: "0.1em 0 0 0" }}>{links}</p>}
+      </header>
+
+      <UniversitySection title="Profile">
+        <p
+          className={cn("text-gray-800", isSummaryGenerated && "resume-preview-highlight")}
+          style={{ margin: 0 }}
+        >
+          {generatedResume.improvedSummary || generatedResume.summary}
+        </p>
+      </UniversitySection>
+
+      <UniversitySection title="Education">
+        {profile.education.map((edu) => (
+          <div key={edu.id} className="mb-2" style={{ pageBreakInside: "avoid" }}>
+            <div className="flex justify-between gap-4 font-bold">
+              <span>{edu.institution}</span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="italic">{edu.degree} in {edu.field}</span>
+              <span className="whitespace-nowrap">{edu.endDate}</span>
+            </div>
+            {edu.gpa && <p style={{ margin: "0.1em 0 0 0" }}>GPA: {edu.gpa}</p>}
+          </div>
+        ))}
+      </UniversitySection>
+
+      <UniversitySection title="Experience">
+        {generatedResume.selectedExperience.map((exp) => (
+          <div key={exp.id} className="mb-2" style={{ pageBreakInside: "avoid" }}>
+            <div className="flex justify-between gap-4 font-bold">
+              <span>{exp.company}</span>
+              <span className="whitespace-nowrap font-normal">{exp.location}</span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="italic">{exp.position}</span>
+              <span className="whitespace-nowrap">{exp.startDate} - {exp.endDate}</span>
+            </div>
+            <ul className="list-disc pl-5 text-gray-800" style={{ margin: "0.15em 0 0 0" }}>
+              {exp.description.slice(0, 8).map((bullet, index) => (
+                <li
+                  key={index}
+                  className={cn(isExperienceBulletGenerated(exp.id, bullet) && "resume-preview-highlight")}
+                  style={{ margin: "0.075em 0" }}
+                >
+                  {bullet}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </UniversitySection>
+
+      {displayProjects.length > 0 && (
+        <UniversitySection title="Projects">
+          {displayProjects.slice(0, 4).map((project) => (
+            <div key={project.id || project.name} className="mb-2" style={{ pageBreakInside: "avoid" }}>
+              <div className="flex justify-between gap-4 font-bold">
+                <span>{project.name}</span>
+                <span className="text-right font-normal">{project.technologies.slice(0, 8).join(", ")}</span>
+              </div>
+              {project.description && (
+                <p className="text-gray-800" style={{ margin: "0.08em 0 0 0" }}>
+                  {project.description}
+                </p>
+              )}
+              <ul className="list-disc pl-5 text-gray-800" style={{ margin: "0.15em 0 0 0" }}>
+                {project.highlights.slice(0, displayProjects.length > 2 ? 3 : 5).map((highlight, index) => (
+                  <li
+                    key={index}
+                    className={cn(isProjectHighlightGenerated(project.id, project.name, highlight) && "resume-preview-highlight")}
+                    style={{ margin: "0.07em 0" }}
+                  >
+                    {highlight}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </UniversitySection>
+      )}
+
+      <UniversitySection title="Technical Skills">
+        <p style={{ margin: 0 }}>
+          {tailoredSkills.map((skill, index) => (
+            <span key={`${skill}-${index}`}>
+              <span className={cn(isSkillGenerated(skill) && "resume-preview-highlight")}>{skill}</span>
+              {index < tailoredSkills.length - 1 ? ", " : ""}
+            </span>
+          ))}
+        </p>
+      </UniversitySection>
+
+      {generatedResume.selectedCertifications.length > 0 && (
+        <UniversitySection title="Certifications">
+          {generatedResume.selectedCertifications.map((cert) => (
+            <p key={cert.id || cert.name} style={{ margin: "0.05em 0" }}>
+              {formatCertification(cert)}
+            </p>
+          ))}
+        </UniversitySection>
+      )}
+
+      {generatedResume.selectedAchievements.length > 0 && (
+        <UniversitySection title="Honors & Achievements">
+          <ul className="list-disc pl-5 text-gray-800" style={{ margin: "0.12em 0 0 0" }}>
+            {generatedResume.selectedAchievements.map((achievement) => (
+              <li key={achievement} style={{ margin: "0.06em 0" }}>{achievement}</li>
+            ))}
+          </ul>
+        </UniversitySection>
+      )}
+    </div>
+  )
+}
+
+function DenseSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="mb-1.5" style={{ pageBreakInside: "avoid" }}>
+      <h2
+        className="uppercase text-gray-700 border-b border-gray-600"
+        style={{ fontSize: "12px", lineHeight: 1.1, margin: "0 0 0.18em 0" }}
+      >
+        {title}
+      </h2>
+      {children}
+    </section>
+  )
+}
+
+function OriginalCvResume({
+  generatedResume,
+  tailoredSkills,
+  displayProjects,
+  isSummaryGenerated,
+  isSkillGenerated,
+  isExperienceBulletGenerated,
+  isProjectHighlightGenerated,
+}: {
+  generatedResume: GeneratedResume
+  tailoredSkills: string[]
+  displayProjects: ResumeProject[]
+  isSummaryGenerated: boolean
+  isSkillGenerated: (skill: string) => boolean
+  isExperienceBulletGenerated: (experienceId: string, bullet: string) => boolean
+  isProjectHighlightGenerated: (projectId: string, projectName: string, highlight: string) => boolean
+}) {
+  const profile = generatedResume.profile
+  const expertise = [
+    "Business Systems Analysis",
+    "Python & SQL Programming",
+    "Project Management",
+    "Data Analysis & Reporting",
+    "Database Management",
+    "Technical Documentation",
+    "Data Visualization",
+    "Cross-Functional Collaboration",
+    "Process Improvement",
+    "Stakeholder Communication",
+    "Requirements Gathering",
+    ...tailoredSkills.slice(0, 8),
+  ].filter((item, index, values) => values.findIndex((value) => normalizeCompareText(value) === normalizeCompareText(item)) === index).slice(0, 15)
+  const projects = displayProjects.slice(0, 3)
+
+  return (
+    <div
+      className="text-gray-950"
+      style={{ fontFamily: ORIGINAL_CV_FONT_FAMILY, fontSize: "10.9px", lineHeight: 1.16 }}
+    >
+      <header className="text-center mb-2" style={{ pageBreakInside: "avoid" }}>
+        <h1 className="font-bold tracking-wide" style={{ fontSize: "20px", lineHeight: 1, margin: 0 }}>
+          {profile.personalInfo.firstName} {profile.personalInfo.lastName}, M.SC.
+        </h1>
+        <p className="text-gray-600" style={{ fontSize: "13px", margin: "0.15em 0 0 0" }}>
+          {generatedResume.jobTitle !== "Target Role" ? generatedResume.jobTitle : "Business Analyst"} | Data Specialist | Data Analyst
+        </p>
+        <p className="text-gray-900" style={{ fontSize: "10.5px", margin: "0.2em 0 0 0" }}>
+          {profile.personalInfo.phone} | {profile.personalInfo.location} | {profile.personalInfo.email} | {profile.personalInfo.linkedin}
+        </p>
+      </header>
+
+      <DenseSection title="Professional Summary">
+        <p
+          className={cn("text-gray-900", isSummaryGenerated && "resume-preview-highlight")}
+          style={{ margin: 0 }}
+        >
+          {generatedResume.improvedSummary || generatedResume.summary}
+        </p>
+      </DenseSection>
+
+      <DenseSection title="Areas of Expertise">
+        <ul
+          className="grid grid-cols-3 gap-x-5 list-disc text-gray-950"
+          style={{ margin: "0 0 0 1.4em", padding: 0 }}
+        >
+          {expertise.map((skill) => (
+            <li key={skill} className={cn(isSkillGenerated(skill) && "resume-preview-highlight")} style={{ margin: "0.04em 0" }}>
+              {skill}
+            </li>
+          ))}
+        </ul>
+      </DenseSection>
+
+      <DenseSection title="Professional Experience">
+        {generatedResume.selectedExperience.map((exp) => (
+          <div key={exp.id} className="mb-1.5" style={{ pageBreakInside: "avoid" }}>
+            <div style={{ fontSize: "12.2px", lineHeight: 1.1 }}>
+              <span className="font-bold">{exp.position}</span>
+              <span>|{exp.company}, {exp.location} </span>
+              <span className="text-gray-600">{exp.startDate} - {exp.endDate}</span>
+            </div>
+            <ul className="list-disc pl-6 text-gray-900" style={{ margin: "0.16em 0 0 0" }}>
+              {exp.description.slice(0, 8).map((bullet, index) => (
+                <li
+                  key={index}
+                  className={cn(isExperienceBulletGenerated(exp.id, bullet) && "resume-preview-highlight")}
+                  style={{ margin: "0.06em 0" }}
+                >
+                  {bullet}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </DenseSection>
+
+      {projects.length > 0 && (
+        <DenseSection title="Projects">
+          {projects.map((project) => (
+            <div key={project.id || project.name} className="mb-1" style={{ pageBreakInside: "avoid" }}>
+              <p className="font-bold" style={{ fontSize: "11.8px", margin: 0 }}>{project.name}</p>
+              <p style={{ margin: "0.04em 0 0 0" }}>
+                Tools: {project.technologies.slice(0, 10).join(", ")}.
+              </p>
+              <ul className="list-disc pl-6 text-gray-900" style={{ margin: "0.1em 0 0 0" }}>
+                {project.highlights.slice(0, projects.length > 1 ? 3 : 5).map((highlight, index) => (
+                  <li
+                    key={index}
+                    className={cn(isProjectHighlightGenerated(project.id, project.name, highlight) && "resume-preview-highlight")}
+                    style={{ margin: "0.04em 0" }}
+                  >
+                    {highlight}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </DenseSection>
+      )}
+
+      <DenseSection title="Education">
+        {profile.education.map((edu) => (
+          <p key={edu.id} style={{ margin: "0.05em 0" }}>
+            <strong>{edu.degree} in {edu.field}</strong>, {edu.institution}{edu.gpa ? ` [${edu.gpa} GPA]` : ""}
+          </p>
+        ))}
+      </DenseSection>
+
+      <DenseSection title="Technical Skills">
+        <p style={{ margin: "0.04em 0" }}>
+          <strong>Programming Languages:</strong> {profile.skills.programming.join(", ")}
+        </p>
+        <p style={{ margin: "0.04em 0" }}>
+          <strong>Business Intelligence:</strong> {[...profile.skills.visualization, "MS Excel"].join(", ")}
+        </p>
+        <p style={{ margin: "0.04em 0" }}>
+          <strong>Data & Machine Learning:</strong> {profile.skills.dataAnalysis.join(", ")}
+        </p>
+        <p style={{ margin: "0.04em 0" }}>
+          <strong>Databases & Tools:</strong> {[...profile.skills.databases, ...profile.skills.tools].join(", ")}
+        </p>
+      </DenseSection>
+
+      {generatedResume.selectedCertifications.length > 0 && (
+        <DenseSection title="Certifications">
+          {generatedResume.selectedCertifications.map((cert) => (
+            <p key={cert.id || cert.name} style={{ margin: "0.04em 0" }}>
+              {formatCertification(cert)}
+            </p>
+          ))}
+        </DenseSection>
+      )}
+
+      {generatedResume.selectedAchievements.length > 0 && (
+        <DenseSection title="Honors & Achievements">
+          <ul className="list-disc pl-6 text-gray-900" style={{ margin: "0.08em 0 0 0" }}>
+            {generatedResume.selectedAchievements.map((achievement) => (
+              <li key={achievement} style={{ margin: "0.04em 0" }}>{achievement}</li>
+            ))}
+          </ul>
+        </DenseSection>
+      )}
+    </div>
+  )
 }
 
 export default function ResumePreviewPage() {
@@ -429,8 +911,12 @@ export default function ResumePreviewPage() {
       ]
   const resumeTemplate = templateStyles[selectedTemplateId]
   const isCompact = selectedTemplateId === "compact"
+  const isUniversityLaw = selectedTemplateId === "university-law"
+  const isOriginalCv = selectedTemplateId === "original-cv"
   const displayProjects = mergeProjectsForFullPage(generatedResume.selectedProjects, profile.projects)
-  const downloadText = buildDownloadText({ generatedResume, tailoredSkills, displayProjects })
+  const downloadText = isUniversityLaw
+    ? buildUniversityLawDownloadText({ generatedResume, tailoredSkills, displayProjects })
+    : buildDownloadText({ generatedResume, tailoredSkills, displayProjects })
   const fileBaseName = sanitizeFilename(`${profile.personalInfo.firstName}_${profile.personalInfo.lastName}_resume`) || "resume"
   const screenZoomScale = zoom / 100
   const profileSkillSet = getProfileSkills(profile)
@@ -508,7 +994,7 @@ export default function ResumePreviewPage() {
   }
 
   const handleDownloadDOCX = () => {
-    downloadBlob(createDocxBlob(downloadText), `${fileBaseName}.docx`)
+    downloadBlob(createDocxBlob(downloadText, selectedTemplateId), `${fileBaseName}.docx`)
     toast.success("DOCX downloaded")
   }
 
@@ -566,7 +1052,11 @@ export default function ResumePreviewPage() {
               >
                 <div
                   ref={resumePageRef}
-                  className={cn("resume-print-page", resumeTemplate.body, isCompact ? "px-6 py-5" : "px-7 py-6")}
+                  className={cn(
+                    "resume-print-page",
+                    resumeTemplate.body,
+                    isCompact ? "px-6 py-5" : isUniversityLaw ? "px-9 py-7" : isOriginalCv ? "px-10 py-5" : "px-7 py-6"
+                  )}
                   style={{
                     width: `${RESUME_PAGE_WIDTH}px`,
                     height: `${RESUME_PAGE_HEIGHT}px`,
@@ -586,6 +1076,28 @@ export default function ResumePreviewPage() {
                       transformOrigin: "top left",
                     }}
                   >
+                  {isOriginalCv ? (
+                    <OriginalCvResume
+                      generatedResume={generatedResume}
+                      tailoredSkills={tailoredSkills}
+                      displayProjects={displayProjects}
+                      isSummaryGenerated={isSummaryGenerated}
+                      isSkillGenerated={isSkillGenerated}
+                      isExperienceBulletGenerated={isExperienceBulletGenerated}
+                      isProjectHighlightGenerated={isProjectHighlightGenerated}
+                    />
+                  ) : isUniversityLaw ? (
+                    <UniversityLawResume
+                      generatedResume={generatedResume}
+                      tailoredSkills={tailoredSkills}
+                      displayProjects={displayProjects}
+                      isSummaryGenerated={isSummaryGenerated}
+                      isSkillGenerated={isSkillGenerated}
+                      isExperienceBulletGenerated={isExperienceBulletGenerated}
+                      isProjectHighlightGenerated={isProjectHighlightGenerated}
+                    />
+                  ) : (
+                    <>
                   {/* Header */}
                   <div className={resumeTemplate.header} style={{ pageBreakInside: "avoid" }}>
                     <h1 className={cn("text-2xl", resumeTemplate.name, selectedTemplateId === "executive" && "uppercase")} style={{ fontSize: "24px", margin: "0 0 0.3em 0" }}>
@@ -710,17 +1222,33 @@ export default function ResumePreviewPage() {
                     ))}
                   </div>
 
-                  {/* Certifications are temporarily hidden. Keep this block for future re-enable. */}
-                  {/* <div>
-                    <h2 className="text-sm font-bold text-gray-900 uppercase tracking-wide border-b border-gray-300 pb-1 mb-2">
-                      Certifications
-                    </h2>
-                    <div className="text-gray-700" style={{ fontSize: "12px" }}>
+                  {generatedResume.selectedCertifications.length > 0 && (
+                    <div className={isCompact ? "mb-1.5" : "mb-2.5"}>
+                      <h2 className={cn("text-sm font-bold pb-1 mb-1.5", resumeTemplate.section)}>
+                        Certifications
+                      </h2>
                       {generatedResume.selectedCertifications.map((cert) => (
-                        <p key={cert.id}>{cert.name} - {cert.issuer} ({cert.date})</p>
+                        <p key={cert.id || cert.name} className="text-gray-700" style={{ fontSize: "11px", margin: "0.15em 0" }}>
+                          {formatCertification(cert)}
+                        </p>
                       ))}
                     </div>
-                  </div> */}
+                  )}
+
+                  {generatedResume.selectedAchievements.length > 0 && (
+                    <div className={isCompact ? "mb-1.5" : "mb-2.5"}>
+                      <h2 className={cn("text-sm font-bold pb-1 mb-1.5", resumeTemplate.section)}>
+                        Honors & Achievements
+                      </h2>
+                      <ul className="list-disc pl-5 text-gray-700" style={{ fontSize: "11px", margin: "0.2em 0 0 0" }}>
+                        {generatedResume.selectedAchievements.map((achievement) => (
+                          <li key={achievement} style={{ margin: "0.12em 0" }}>{achievement}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                    </>
+                  )}
                   </div>
                 </div>
               </motion.div>

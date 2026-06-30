@@ -1,192 +1,194 @@
 // Mock data for Mohit Shah's profile
+export const PROFILE_KNOWLEDGE_BASE_VERSION = "2026-06-portfolio-document-no-cert-achievements"
+
 export const mockProfile = {
   personalInfo: {
     firstName: "Mohit",
     lastName: "Shah",
-    email: "mohit.shah@email.com",
-    phone: "+1 (555) 123-4567",
-    location: "San Francisco, CA",
-    linkedin: "linkedin.com/in/mohitshah",
-    github: "github.com/mohitshah",
+    email: "mohit.shah.dev28@gmail.com",
+    phone: "+1 (214) 566-0084",
+    location: "Los Angeles, CA / Ontario, CA",
+    linkedin: "linkedin.com/in/mohitshah2808",
+    github: "github.com/MohitShah28",
     portfolio: "mohitshah.dev",
-    summary: "Results-driven Data Analyst and Software Developer with 4+ years of experience transforming complex datasets into actionable insights. Proficient in Python, SQL, and modern BI tools. Passionate about building data-driven solutions that drive business growth."
+    summary: "Data Analyst focused on transforming complex datasets into actionable insights through Python, SQL, business intelligence, dashboard development, predictive modeling, data cleaning, customer segmentation, and HR analytics. Experienced in turning raw data into practical business value by identifying patterns, explaining drivers, building predictive workflows, and presenting results through clear visual storytelling. Currently available for freelance projects."
   },
   education: [
     {
       id: "1",
-      institution: "University of California, Berkeley",
+      institution: "Loyola Marymount University",
       degree: "Master of Science",
-      field: "Data Science",
-      startDate: "2020",
-      endDate: "2022",
-      gpa: "3.9"
+      field: "Computer Science",
+      startDate: "2025",
+      endDate: "2027",
+      gpa: "3.5/4.00"
     },
     {
       id: "2",
-      institution: "San Jose State University",
-      degree: "Bachelor of Science",
-      field: "Computer Science",
-      startDate: "2016",
-      endDate: "2020",
-      gpa: "3.7"
+      institution: "Gujarat Technological University",
+      degree: "Bachelor of Engineering",
+      field: "Computer Engineering",
+      startDate: "2021",
+      endDate: "2024",
+      gpa: "2.98/4.00"
+    },
+    {
+      id: "3",
+      institution: "Gujarat Technological University",
+      degree: "Diploma",
+      field: "Computer Engineering",
+      startDate: "2018",
+      endDate: "2021",
+      gpa: "2.98/4.00"
     }
   ],
   experience: [
     {
       id: "1",
-      company: "TechCorp Analytics",
-      position: "Senior Data Analyst",
-      location: "San Francisco, CA",
-      startDate: "Jan 2023",
-      endDate: "Present",
+      company: "VNurture Technologies",
+      position: "Data Analyst Intern",
+      location: "Ahmedabad, India",
+      startDate: "Jan 2024",
+      endDate: "Apr 2024",
       description: [
-        "Led data analysis initiatives resulting in 25% improvement in customer retention rates",
-        "Developed automated reporting dashboards using Power BI and Tableau serving 50+ stakeholders",
-        "Implemented machine learning models for predictive analytics, reducing churn by 18%",
-        "Collaborated with cross-functional teams to identify $2M in cost-saving opportunities"
-      ]
-    },
-    {
-      id: "2",
-      company: "DataDriven Inc.",
-      position: "Data Analyst",
-      location: "San Jose, CA",
-      startDate: "Jun 2020",
-      endDate: "Dec 2022",
-      description: [
-        "Analyzed large datasets using Python, Pandas, and SQL to extract business insights",
-        "Created interactive dashboards and visualizations for executive leadership",
-        "Optimized ETL pipelines reducing data processing time by 40%",
-        "Mentored junior analysts on best practices in data analysis and visualization"
+        "Performed end-to-end data analysis on a two-year customer marketing dataset using data cleaning, feature engineering, exploratory data analysis, and segmentation techniques",
+        "Handled missing values, removed outliers using IQR, corrected data types, and engineered variables including Age, Age Group, Income Status, Total Purchases, and Total Expenses",
+        "Built visualizations and dashboard-style reports using Matplotlib and Seaborn to analyze demographics, spending, campaign performance, age groups, and income-based spending trends",
+        "Conducted correlation analysis and Kruskal-Wallis testing, including a reported 0.82 relationship between income and expenses",
+        "Analyzed web, catalog, and store transactions, identifying in-store purchases as the highest-volume purchase channel",
+        "Evaluated marketing campaign acceptance rates, demographic response behavior, and engagement metrics to support targeting strategies",
+        "Created reports, charts, and insight summaries for academic supervisors and organizational stakeholders",
+        "Used Python, Pandas, NumPy, Matplotlib, Seaborn, Jupyter Notebook, and VS Code across data preparation, analysis, visualization, and reporting workflows"
       ]
     }
   ],
   projects: [
     {
       id: "1",
-      name: "AI Resume Builder",
-      description: "Full-stack application that generates ATS-optimized resumes using NLP and machine learning algorithms",
-      technologies: ["Python", "Next.js", "OpenAI API", "PostgreSQL"],
-      link: "github.com/mohitshah/resume-builder",
+      name: "HR Analytics: Employee Attrition Analysis and Prediction",
+      description: "End-to-end HR analytics solution using Python and Power BI to analyze attrition patterns, predict turnover risk, and support HR decision-making.",
+      technologies: ["Python", "Pandas", "NumPy", "Scikit-learn", "Matplotlib", "Seaborn", "Power BI", "Jupyter Notebook", "PyCharm"],
+      link: "https://www.mohitshah.dev/projects/hr-analytics-employee-attrition",
       highlights: [
-        "Processed 10,000+ job descriptions to train keyword extraction model",
-        "Achieved 95% ATS compatibility score across major recruiting platforms"
+        "Analyzed 30+ HR features covering demographics, tenure, performance, compensation, overtime, and work-life balance attributes",
+        "Standardized date fields and handled missing or invalid values using Python to improve data reliability for analysis",
+        "Identified 5+ attrition drivers including tenure, job role, overtime, performance ratings, and salary level",
+        "Built a classification model for employee attrition risk scoring and interpreted feature importance for decision support",
+        "Delivered Power BI dashboards showing attrition distribution, department-wise attrition, feature importance, and predicted attrition risk by department",
+        "Created a scalable framework for workforce planning, retention analysis, engagement tracking, and proactive HR intervention"
       ]
     },
     {
       id: "2",
-      name: "AI Data Cleaning Dashboard",
-      description: "Automated data cleaning and preprocessing tool with intelligent anomaly detection",
+      name: "Customer Personality Analysis and Segmentation",
+      description: "Comprehensive customer data analysis to identify key segments and optimize marketing strategies through cleaning, feature engineering, statistical testing, and visual storytelling.",
+      technologies: [
+        "Python",
+        "Pandas",
+        "NumPy",
+        "Seaborn",
+        "Matplotlib",
+        "SciPy",
+        "Jupyter Notebook"
+      ],
+      link: "https://www.mohitshah.dev/projects/customer-segmentation-analysis",
+      highlights: [
+        "Analyzed 2,200+ customers from a marketing dataset and identified 4 distinct customer personas",
+        "Engineered features including Total Spending and Tenure to support customer behavior and demographic analysis",
+        "Applied unsupervised segmentation and structured exploratory analysis to study age groups, marital status, purchase channels, and campaign responses",
+        "Used Kruskal-Wallis testing and visual comparisons to evaluate meaningful customer behavior patterns",
+        "Found customers aged 45 and above contributed the highest purchase volume and married customers accounted for the largest share",
+        "Identified in-store purchases as the dominant channel, followed by web purchases, and translated findings into marketing recommendations"
+      ]
+    },
+    {
+      id: "3",
+      name: "Cleanlytics AI",
+      description: "AI-powered enterprise data quality platform using Python and Streamlit to automate profiling, cleaning, schema inference, anomaly detection, reports, and cleaned dataset exports.",
       technologies: [
         "Python",
         "Streamlit",
         "Pandas",
         "NumPy",
-        "Scikit-Learn",
-        "Matplotlib",
+        "Scikit-learn",
         "Plotly",
-        "OpenPyXL",
-        "Python Datetime Library",
-        "Regular Expressions (Regex)",
-        "Machine Learning Algorithms",
-        "Isolation Forest",
-        "Z-Score Analysis",
-        "IQR (Interquartile Range)",
-        "Git",
-        "GitHub",
-        "VS Code"
+        "ReportLab",
+        "Machine Learning",
+        "Data Cleaning",
+        "IQR",
+        "Z-Score",
+        "Isolation Forest"
       ],
-      link: "github.com/mohitshah/data-cleaner",
+      link: "https://www.mohitshah.dev/projects/cleanlytics-ai",
       highlights: [
-        "Reduced data preparation time by 60% for data science teams",
-        "Implemented ML-based outlier detection with 92% accuracy"
-      ]
-    },
-    {
-      id: "3",
-      name: "HR Analytics Platform",
-      description: "Comprehensive HR analytics solution for employee performance and attrition analysis",
-      technologies: [
-        "Python",
-        "SQL",
-        "Power BI",
-        "Pandas",
-        "NumPy",
-        "Scikit-Learn",
-        "Matplotlib",
-        "Seaborn",
-        "Jupyter Notebook",
-        "SQL Server / MySQL",
-        "Excel",
-        "Git",
-        "GitHub",
-        "VS Code"
-      ],
-      link: "github.com/mohitshah/hr-analytics",
-      highlights: [
-        "Predicted employee attrition with 87% accuracy using ensemble methods",
-        "Deployed interactive dashboards used by 200+ HR professionals"
+        "Built a multi-page Streamlit dashboard for dataset profiling, automated cleaning, schema inference, reports, exports, and insights",
+        "Implemented outlier detection using IQR, Z-Score, and Isolation Forest for statistical and machine learning-based comparison",
+        "Added profiling workflows for structure, missing values, column types, unique values, duplicates, wrong data types, and quality issues",
+        "Created schema inference logic using numeric conversion ratio, datetime parsing success, uniqueness ratio, and pattern checks",
+        "Generated automated PDF reports, cleaned dataset exports, backup recovery flows, and cleaning audit logs for transparency",
+        "Designed a responsive SaaS-style dashboard UI with module cards, workflow access, report management, and modular multi-page architecture"
       ]
     },
     {
       id: "4",
-      name: "Customer Personality Analysis",
-      description: "Customer segmentation and personality profiling using clustering algorithms",
-      technologies: ["Python", "NumPy", "Matplotlib", "K-Means"],
-      link: "github.com/mohitshah/customer-analysis",
+      name: "Portfolio Website and Analytics Case Studies",
+      description: "Personal portfolio presenting data analytics projects, public resume, project case studies, media assets, and contact channels for freelance and professional opportunities.",
+      technologies: ["Portfolio Website", "Project Documentation", "Data Storytelling", "GitHub", "Resume PDF", "Visual Assets"],
+      link: "https://www.mohitshah.dev/",
       highlights: [
-        "Identified 5 distinct customer segments driving targeted marketing campaigns",
-        "Increased marketing ROI by 35% through personalized recommendations"
+        "Published detailed case studies covering objectives, tools, metrics, methodology, business impact, features, challenges, and future enhancements",
+        "Showcased HR visuals including attrition distribution, department-wise attrition rate, feature importance, and predicted attrition risk by department",
+        "Showcased customer analytics visuals including purchases by age group, purchases by marital status, customer purchase channels, and campaign responses",
+        "Showcased Cleanlytics AI screens including home dashboard, dataset profiling, schema report, cleaning results, outlier results, reports, exports, and report details"
       ]
     }
   ],
   skills: {
-    programming: ["Python", "SQL", "JavaScript", "TypeScript"],
+    programming: ["Python", "SQL", "JavaScript", "TypeScript", "C", "C++"],
     dataAnalysis: [
       "Pandas",
       "NumPy",
-      "Scikit-Learn",
+      "Scikit-learn",
       "Data Cleaning",
       "Exploratory Data Analysis (EDA)",
       "Feature Engineering",
       "Statistical Analysis",
       "Machine Learning",
-      "Predictive Analytics"
+      "Predictive Analytics",
+      "Predictive Modeling",
+      "Customer Segmentation",
+      "HR Analytics",
+      "Business Intelligence",
+      "Business Systems Analysis",
+      "Project Management",
+      "Data Analysis and Reporting",
+      "Technical Documentation",
+      "Cross-Functional Collaboration",
+      "Regression",
+      "Classification",
+      "K-Means",
+      "Random Forest",
+      "XGBoost",
+      "Kruskal-Wallis Testing",
+      "IQR Outlier Detection",
+      "Z-Score Analysis",
+      "Isolation Forest",
+      "Schema Inference",
+      "Anomaly Detection"
     ],
-    visualization: ["Power BI", "Tableau", "Matplotlib", "Seaborn", "Plotly", "Microsoft Excel"],
-    databases: ["MySQL", "SQL Server", "Firebase"],
-    cloud: [] as string[],
-    tools: ["Streamlit", "Git", "GitHub", "Jupyter Notebook", "VS Code", "Anaconda", "DataGrip"]
+    visualization: ["Power BI", "Tableau", "Matplotlib", "Seaborn", "Plotly", "Microsoft Excel", "Excel / VBA"],
+    databases: ["MySQL", "SQL Server", "PostgreSQL", "MongoDB", "Firebase"],
+    cloud: ["Apache Spark"],
+    tools: ["Streamlit", "Git", "GitHub", "Jupyter Notebook", "VS Code", "Anaconda", "PyCharm", "DataGrip", "MS Office", "ReportLab"]
   },
-  certifications: [
-    {
-      id: "1",
-      name: "AWS Certified Data Analytics",
-      issuer: "Amazon Web Services",
-      date: "2023",
-      credentialId: "AWS-DA-2023"
-    },
-    {
-      id: "2",
-      name: "Google Data Analytics Professional",
-      issuer: "Google",
-      date: "2022",
-      credentialId: "GDAP-2022"
-    },
-    {
-      id: "3",
-      name: "Microsoft Power BI Data Analyst",
-      issuer: "Microsoft",
-      date: "2022",
-      credentialId: "PL-300"
-    }
-  ],
-  achievements: [
-    "Speaker at DataConf 2023 on 'ML in Production'",
-    "Published research on predictive analytics in IEEE",
-    "Winner of Kaggle Competition - Customer Churn Prediction",
-    "Open source contributor with 500+ GitHub stars"
-  ]
+  certifications: [] as Array<{
+    id: string
+    name: string
+    issuer: string
+    date: string
+    credentialId: string
+  }>,
+  achievements: [] as string[]
 }
 
 export const mockResumes = [
