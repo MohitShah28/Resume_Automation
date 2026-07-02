@@ -319,7 +319,7 @@ function tailorBullets(bullets: string[], keywords: string[], jobDescription: st
     const verb = actionVerbs[index % actionVerbs.length]
     const keyword = selectedKeywords[index % Math.max(selectedKeywords.length, 1)]
     if (!keyword || includesTerm(bullet, keyword)) return bullet
-    return `${verb} ${bullet.charAt(0).toLowerCase()}${bullet.slice(1)}, supporting ${keyword} and role-aligned delivery`
+    return `${verb} ${bullet.charAt(0).toLowerCase()}${bullet.slice(1)}, with emphasis on ${keyword}`
   })
 
   if (tailored.length >= targetCount) return tailored
@@ -379,27 +379,36 @@ function tailorProjectHighlights(project: ProfileData["projects"][number], keywo
   const existingHighlights = project.highlights.length
     ? project.highlights
     : [project.description]
-  const relevantKeywords = keywords.filter((keyword) =>
-    includesTerm(`${project.name} ${project.description} ${project.technologies.join(" ")}`, keyword)
+  const projectEvidence = `${project.name} ${project.description} ${project.technologies.join(" ")} ${project.highlights.join(" ")}`
+  const relevantKeywords = keywords.filter((keyword) => includesTerm(projectEvidence, keyword))
+  const relevantTechnologies = project.technologies.filter((technology) =>
+    keywords.some((keyword) => includesTerm(technology, keyword) || includesTerm(keyword, technology)) ||
+    includesTerm(jobDescription, technology)
   )
+  const rewrittenHighlights = existingHighlights.slice(0, targetCount).map((highlight, index) => {
+    const keyword = relevantKeywords[index % Math.max(relevantKeywords.length, 1)]
+    const technology = relevantTechnologies[index % Math.max(relevantTechnologies.length, 1)]
+    const supportTerm = keyword || technology
 
-  const generatedHighlights = [
-    relevantKeywords.length
-      ? `Applied ${relevantKeywords.slice(0, 5).join(", ")} to solve role-relevant technical and business problems`
+    if (!supportTerm || includesTerm(highlight, supportTerm)) return highlight
+    return `${highlight}, emphasizing ${supportTerm}`
+  })
+  const supportedAdditions = [
+    project.description ? `Delivered ${project.description.charAt(0).toLowerCase()}${project.description.slice(1)}` : "",
+    relevantTechnologies.length
+      ? `Used ${relevantTechnologies.slice(0, 5).join(", ")} to support project implementation and analysis`
       : "",
-    "Designed reusable workflows with clear inputs, outputs, validation steps, and documentation for end users",
-    "Improved project usability by organizing results into practical dashboards, reports, or repeatable analysis flows",
-    includesTerm(jobDescription, "deploy") || includesTerm(jobDescription, "production")
-      ? "Prepared project outputs for repeatable use with clear setup, testing, and deployment-oriented documentation"
-      : "Tested project outputs for accuracy, consistency, and readability before presenting results",
+    relevantKeywords.length && (includesTerm(projectEvidence, "dashboard") || includesTerm(projectEvidence, "visual") || includesTerm(projectEvidence, "report"))
+      ? `Organized findings into dashboard-ready outputs and visual summaries using supported project workflows`
+      : "",
+    relevantKeywords.length && (includesTerm(projectEvidence, "analysis") || includesTerm(projectEvidence, "data"))
+      ? `Analyzed project data and outputs to surface practical insights for decision-making`
+      : "",
   ]
 
-  if (existingHighlights.length >= targetCount) return existingHighlights.slice(0, targetCount)
-
   return unique([
-    ...existingHighlights,
-    ...generatedHighlights,
-    project.description ? `Built around ${project.description.charAt(0).toLowerCase()}${project.description.slice(1)}` : "",
+    ...rewrittenHighlights,
+    ...supportedAdditions,
   ]).slice(0, targetCount)
 }
 
@@ -629,13 +638,14 @@ export function generateResumeFromJob({
     changeHighlights: [
       `Rewrote the professional summary for ${jobTitle}`,
       `Prioritized ${selectedExperience.length} experience section${selectedExperience.length === 1 ? "" : "s"} most relevant to the job`,
-      `Selected ${selectedProjects.length} project${selectedProjects.length === 1 ? "" : "s"} aligned with the target role`,
+      `Optimized ${selectedProjects.length} project${selectedProjects.length === 1 ? "" : "s"} with job-aligned descriptions and bullets`,
       `Added or emphasized ${keywordsAdded.slice(0, 5).join(", ") || "job-specific"} keywords`,
     ],
     atsScore,
     strengths: [
       "Resume content is tailored to the job description",
       "Relevant profile experience and projects are prioritized",
+      "Project bullets are rewritten from existing project evidence",
       "ATS keywords from the posting are included in the resume",
       "Bullet points use action-oriented language",
     ],

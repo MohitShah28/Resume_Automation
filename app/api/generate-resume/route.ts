@@ -152,6 +152,13 @@ Rules:
 - Rewrite bullets professionally, select relevant projects, and add ATS keywords naturally.
 - Return full, substantive content when supported by the candidate profile: 6-8 bullets for the strongest experience entries and 4-5 bullets for each selected project.
 - Make bullets specific, action-oriented, and outcome-focused. Prefer what was built, analyzed, automated, improved, tested, deployed, or presented.
+- Optimize the Projects section with the same care as the summary and experience sections:
+  1. Analyze required skills, preferred skills, technologies, responsibilities, industry terminology, and ATS keywords from the job description.
+  2. Compare those requirements against every project in the candidate profile.
+  3. Select the most relevant projects and rewrite each selected project's description and highlights to emphasize supported work that matches the target role.
+  4. Leave unrelated projects mostly unchanged or omit them if stronger projects exist.
+  5. Add project bullets only when the work is clearly supported by the original project description, original highlights, technologies, or profile data.
+- For selectedProjects, preserve the original project id/name/link and do not add technologies that are not already listed for that project.
 - For software, AI, LLM, web, startup, API, or automation roles, emphasize supported software/product/automation work.
 - Return changeHighlights explaining the main edits made compared with the candidate profile/job input.
 - Use plain ATS formatting only. No tables, columns, icons, markdown fences, or extra commentary.
@@ -260,7 +267,10 @@ function normalizeProjects(value: Partial<GeneratedResume>["selectedProjects"], 
   const isDenseOnePage = fallback.template === "original-cv" || fallback.template === "university-law"
   const projectLimit = isDenseOnePage ? 4 : 3
   const highlightLimit = isDenseOnePage ? 5 : 4
-  const selected = Array.isArray(value) && value.length ? value : fallback.selectedProjects
+  const profileProjects = fallback.profile.projects
+  const selected = Array.isArray(value) && value.length
+    ? value.filter((project) => profileProjects.some((item) => item.id === project.id || item.name === project.name))
+    : fallback.selectedProjects
   const merged = [...selected]
 
   for (const project of fallback.selectedProjects) {
@@ -270,13 +280,17 @@ function normalizeProjects(value: Partial<GeneratedResume>["selectedProjects"], 
   }
 
   return merged.slice(0, projectLimit).map((project) => {
-    const fallbackProject = fallback.selectedProjects.find((item) => item.id === project.id || item.name === project.name)
+    const profileProject = profileProjects.find((item) => item.id === project.id || item.name === project.name)
+    const fallbackProject = fallback.selectedProjects.find((item) => item.id === project.id || item.name === project.name) || profileProject
     const highlights = Array.isArray(project.highlights) && project.highlights.length ? project.highlights : fallbackProject?.highlights || []
 
     return {
       ...fallbackProject,
       ...project,
-      technologies: Array.isArray(project.technologies) && project.technologies.length ? project.technologies : fallbackProject?.technologies || [],
+      id: fallbackProject?.id || project.id,
+      name: fallbackProject?.name || project.name,
+      link: fallbackProject?.link || project.link,
+      technologies: fallbackProject?.technologies || [],
       highlights: Array.from(new Set([...highlights, ...(fallbackProject?.highlights || [])])).slice(0, highlightLimit),
     }
   })

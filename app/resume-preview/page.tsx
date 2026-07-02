@@ -307,21 +307,77 @@ function createZipBlob(files: { name: string; content: string }[]) {
   })
 }
 
-function getDocxParagraph(line: string, templateId: TemplateId) {
+function getDocxConfig(templateId: TemplateId) {
+  if (templateId === "university-law") {
+    return {
+      font: "Calibri",
+      bodySize: 18,
+      nameSize: 26,
+      headingSize: 20,
+      line: 188,
+      margin: 540,
+      tabPosition: 10100,
+    }
+  }
+
+  if (templateId === "original-cv") {
+    return {
+      font: "Times New Roman",
+      bodySize: 20,
+      nameSize: 40,
+      headingSize: 23,
+      line: 205,
+      margin: 540,
+      tabPosition: 9720,
+    }
+  }
+
+  return {
+    font: "Arial",
+    bodySize: 20,
+    nameSize: 32,
+    headingSize: 22,
+    line: 220,
+    margin: 720,
+    tabPosition: 9360,
+  }
+}
+
+function getDocxParagraph(line: string, templateId: TemplateId, lineIndex: number) {
   const trimmed = line.trim()
   const isUniversityLaw = templateId === "university-law"
-  const isName = isUniversityLaw && /^[A-Z][A-Z\s.'-]+$/.test(trimmed) && trimmed.length > 2
+  const isOriginalCv = templateId === "original-cv"
+  const docxConfig = getDocxConfig(templateId)
+  const isName = (
+    isUniversityLaw && lineIndex === 0 && /^[A-Z][A-Z\s.'-]+$/.test(trimmed) && trimmed.length > 2
+  ) || (
+    isOriginalCv && lineIndex === 0 && trimmed.includes(", M.SC.")
+  )
+  const isContactLine = !isName && lineIndex <= 2 && (
+    trimmed.includes("@") ||
+    trimmed.startsWith("http") ||
+    trimmed.includes("linkedin.com") ||
+    trimmed.includes("github.com") ||
+    trimmed.includes(" | ")
+  )
   const isHeading = /^[A-Z][A-Z\s&]+$/.test(trimmed) && trimmed.length > 2
   const isBullet = trimmed.startsWith("- ")
+  const isProjectToolLine = trimmed.startsWith("Tools:")
+  const paragraphSpacingAfter = isHeading ? 18 : isName ? 10 : 4
+  const paragraphSpacingBefore = isHeading ? 45 : 0
   const paragraphProps = [
-    '<w:spacing w:after="0" w:line="240" w:lineRule="auto"/>',
+    `<w:spacing w:before="${paragraphSpacingBefore}" w:after="${paragraphSpacingAfter}" w:line="${docxConfig.line}" w:lineRule="auto"/>`,
     isName ? '<w:jc w:val="center"/>' : "",
-    isUniversityLaw && line.includes("\t") ? '<w:tabs><w:tab w:val="right" w:pos="9360"/></w:tabs>' : "",
-    isBullet ? '<w:ind w:left="720" w:hanging="360"/>' : "",
+    isContactLine && (isUniversityLaw || isOriginalCv) ? '<w:jc w:val="center"/>' : "",
+    isUniversityLaw && line.includes("\t") ? `<w:tabs><w:tab w:val="right" w:pos="${docxConfig.tabPosition}"/></w:tabs>` : "",
+    isOriginalCv && line.includes("\t") ? `<w:tabs><w:tab w:val="right" w:pos="${docxConfig.tabPosition}"/></w:tabs>` : "",
+    isBullet ? '<w:ind w:left="360" w:hanging="240"/>' : "",
   ].join("")
   const runProps = [
-    isName ? '<w:b/><w:sz w:val="28"/><w:szCs w:val="28"/>' : "",
-    isHeading ? '<w:b/><w:u w:val="single"/>' : "",
+    `<w:sz w:val="${isName ? docxConfig.nameSize : isHeading ? docxConfig.headingSize : isContactLine || isProjectToolLine ? docxConfig.bodySize - 1 : docxConfig.bodySize}"/><w:szCs w:val="${isName ? docxConfig.nameSize : isHeading ? docxConfig.headingSize : isContactLine || isProjectToolLine ? docxConfig.bodySize - 1 : docxConfig.bodySize}"/>`,
+    isName ? "<w:b/>" : "",
+    isHeading ? "<w:b/><w:u w:val=\"single\"/>" : "",
+    isProjectToolLine ? "<w:i/>" : "",
   ].join("")
   const bulletText = isBullet ? `• ${trimmed.slice(2)}` : line
   const textRuns = bulletText.split("\t").map((part, index) => (
@@ -332,34 +388,32 @@ function getDocxParagraph(line: string, templateId: TemplateId) {
 }
 
 function createDocxBlob(text: string, templateId: TemplateId) {
-  const paragraphs = text.split("\n").map((line) => {
-    return getDocxParagraph(line, templateId)
+  const paragraphs = text.split("\n").filter((line) => line.trim().length > 0).map((line, index) => {
+    return getDocxParagraph(line, templateId, index)
   }).join("")
-  const margins = templateId === "university-law"
-    ? '<w:pgMar w:top="1080" w:right="1080" w:bottom="1080" w:left="1080"/>'
-    : '<w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720"/>'
-  const font = templateId === "university-law"
-    ? "Calibri"
-    : templateId === "original-cv"
-    ? "Times New Roman"
-    : "Arial"
+  const docxConfig = getDocxConfig(templateId)
+  const margins = `<w:pgMar w:top="${docxConfig.margin}" w:right="${docxConfig.margin}" w:bottom="${docxConfig.margin}" w:left="${docxConfig.margin}" w:header="0" w:footer="0" w:gutter="0"/>`
 
   return createZipBlob([
     {
       name: "[Content_Types].xml",
-      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`,
+      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>`,
     },
     {
       name: "_rels/.rels",
       content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`,
     },
     {
+      name: "word/_rels/document.xml.rels",
+      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`,
+    },
+    {
       name: "word/document.xml",
-      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${paragraphs}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>${margins}</w:sectPr></w:body></w:document>`,
+      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${paragraphs}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>${margins}<w:cols w:space="720"/><w:docGrid w:linePitch="360"/></w:sectPr></w:body></w:document>`,
     },
     {
       name: "word/styles.xml",
-      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${font}" w:hAnsi="${font}"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults></w:styles>`,
+      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${docxConfig.font}" w:hAnsi="${docxConfig.font}" w:cs="${docxConfig.font}"/><w:sz w:val="${docxConfig.bodySize}"/><w:szCs w:val="${docxConfig.bodySize}"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="${docxConfig.line}" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults></w:styles>`,
     },
   ])
 }
@@ -484,37 +538,116 @@ function buildUniversityLawDownloadText({
   ].filter(Boolean).join(" | ")
   const certificationLines = generatedResume.selectedCertifications.map(formatCertification)
   const achievementLines = generatedResume.selectedAchievements.map((achievement) => `- ${achievement}`)
+  const primaryExperience = generatedResume.selectedExperience.slice(0, 2)
+  const primaryProjects = displayProjects.slice(0, 2)
+  const docxSkills = tailoredSkills.slice(0, 22)
+  const compactSummary = compactDocxSummary(generatedResume.improvedSummary || generatedResume.summary)
+
   return [
     `${profile.personalInfo.firstName} ${profile.personalInfo.lastName}`.toUpperCase(),
     contact,
     links,
     "",
     "PROFILE",
-    generatedResume.improvedSummary || generatedResume.summary,
+    compactSummary,
     "",
     "EDUCATION",
     ...profile.education.flatMap((edu) => [
-      edu.institution,
-      `${edu.degree} in ${edu.field}\t${edu.endDate}`,
-      edu.gpa ? `GPA:\t${edu.gpa}` : "",
-      "",
+      `${edu.institution}\t${edu.endDate}`,
+      `${edu.degree} in ${edu.field}${edu.gpa ? ` | GPA: ${edu.gpa}` : ""}`,
     ]),
     "EXPERIENCE",
-    ...generatedResume.selectedExperience.flatMap((exp) => [
+    ...primaryExperience.flatMap((exp) => [
       `${exp.company}\t${exp.location}`,
       `${exp.position}\t${exp.startDate} - ${exp.endDate}`,
-      ...exp.description.map((bullet) => `- ${bullet}`),
-      "",
+      ...exp.description.slice(0, 6).map((bullet) => `- ${bullet}`),
     ]),
-    displayProjects.length ? "PROJECTS" : "",
-    ...displayProjects.flatMap((project) => [
+    primaryProjects.length ? "PROJECTS" : "",
+    ...primaryProjects.flatMap((project) => [
       `${project.name}\t${project.technologies.slice(0, 8).join(", ")}`,
-      project.description,
-      ...project.highlights.map((highlight) => `- ${highlight}`),
-      "",
+      ...project.highlights.slice(0, 3).map((highlight) => `- ${highlight}`),
     ]),
     "TECHNICAL SKILLS",
-    tailoredSkills.join(", "),
+    docxSkills.join(", "),
+    certificationLines.length ? "" : undefined,
+    certificationLines.length ? "CERTIFICATIONS" : undefined,
+    ...certificationLines,
+    achievementLines.length ? "" : undefined,
+    achievementLines.length ? "HONORS & ACHIEVEMENTS" : undefined,
+    ...achievementLines,
+  ].filter((line) => line !== undefined).join("\n").trim()
+}
+
+function compactDocxSummary(value: string) {
+  const sentences = value
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean)
+
+  const compact = sentences.slice(0, 2).join(" ")
+  if (compact.length <= 420) return compact
+  return `${compact.slice(0, 417).trim()}...`
+}
+
+function buildOriginalCvDownloadText({
+  generatedResume,
+  tailoredSkills,
+  displayProjects,
+}: {
+  generatedResume: GeneratedResume
+  tailoredSkills: string[]
+  displayProjects: ResumeProject[]
+}) {
+  const profile = generatedResume.profile
+  const expertise = [
+    "Business Systems Analysis",
+    "Python & SQL Programming",
+    "Project Management",
+    "Data Analysis & Reporting",
+    "Database Management",
+    "Technical Documentation",
+    "Data Visualization",
+    "Cross-Functional Collaboration",
+    "Process Improvement",
+    "Stakeholder Communication",
+    "Requirements Gathering",
+    ...tailoredSkills.slice(0, 8),
+  ].filter((item, index, values) => values.findIndex((value) => normalizeCompareText(value) === normalizeCompareText(item)) === index).slice(0, 15)
+  const certificationLines = generatedResume.selectedCertifications.map(formatCertification)
+  const achievementLines = generatedResume.selectedAchievements.map((achievement) => `- ${achievement}`)
+
+  return [
+    `${profile.personalInfo.firstName} ${profile.personalInfo.lastName}, M.SC.`,
+    `${generatedResume.jobTitle !== "Target Role" ? generatedResume.jobTitle : "Business Analyst"} | Data Specialist | Data Analyst`,
+    `${profile.personalInfo.phone} | ${profile.personalInfo.location} | ${profile.personalInfo.email} | ${profile.personalInfo.linkedin}`,
+    "",
+    "PROFESSIONAL SUMMARY",
+    generatedResume.improvedSummary || generatedResume.summary,
+    "",
+    "AREAS OF EXPERTISE",
+    ...expertise.map((skill) => `- ${skill}`),
+    "",
+    "PROFESSIONAL EXPERIENCE",
+    ...generatedResume.selectedExperience.flatMap((exp) => [
+      `${exp.position}\t${exp.company}, ${exp.location}\t${exp.startDate} - ${exp.endDate}`,
+      ...exp.description.slice(0, 8).map((bullet) => `- ${bullet}`),
+      "",
+    ]),
+    "PROJECTS",
+    ...displayProjects.slice(0, 3).flatMap((project) => [
+      project.name,
+      `Tools: ${project.technologies.slice(0, 10).join(", ")}.`,
+      ...project.highlights.slice(0, displayProjects.length > 1 ? 3 : 5).map((highlight) => `- ${highlight}`),
+      "",
+    ]),
+    "EDUCATION",
+    ...profile.education.map((edu) => `${edu.degree} in ${edu.field}, ${edu.institution}${edu.gpa ? ` [${edu.gpa} GPA]` : ""}`),
+    "",
+    "TECHNICAL SKILLS",
+    `Programming Languages: ${profile.skills.programming.join(", ")}`,
+    `Business Intelligence: ${[...profile.skills.visualization, "MS Excel"].join(", ")}`,
+    `Data & Machine Learning: ${profile.skills.dataAnalysis.join(", ")}`,
+    `Databases & Tools: ${[...profile.skills.databases, ...profile.skills.tools].join(", ")}`,
     certificationLines.length ? "" : undefined,
     certificationLines.length ? "CERTIFICATIONS" : undefined,
     ...certificationLines,
@@ -914,7 +1047,9 @@ export default function ResumePreviewPage() {
   const isUniversityLaw = selectedTemplateId === "university-law"
   const isOriginalCv = selectedTemplateId === "original-cv"
   const displayProjects = mergeProjectsForFullPage(generatedResume.selectedProjects, profile.projects)
-  const downloadText = isUniversityLaw
+  const downloadText = isOriginalCv
+    ? buildOriginalCvDownloadText({ generatedResume, tailoredSkills, displayProjects })
+    : isUniversityLaw
     ? buildUniversityLawDownloadText({ generatedResume, tailoredSkills, displayProjects })
     : buildDownloadText({ generatedResume, tailoredSkills, displayProjects })
   const fileBaseName = sanitizeFilename(`${profile.personalInfo.firstName}_${profile.personalInfo.lastName}_resume`) || "resume"
