@@ -345,7 +345,7 @@ function tailorBullets(bullets: string[], keywords: string[], jobDescription: st
   ].slice(0, targetCount)
 }
 
-function buildTailoredSkills(profile: ProfileData, jobDescription: string, keywords: string[]) {
+function buildTailoredSkills(profile: ProfileData, jobDescription: string, keywords: string[], targetCount = 24) {
   const candidateText = profileText(profile)
   const allSkills = unique([
     ...Object.values(profile.skills).flat(),
@@ -363,7 +363,7 @@ function buildTailoredSkills(profile: ProfileData, jobDescription: string, keywo
     }))
     .sort((a, b) => b.score - a.score)
     .map(({ skill }) => skill)
-    .slice(0, 24)
+    .slice(0, targetCount)
 }
 
 function buildImprovedSummary(profile: ProfileData, jobTitle: string, keywords: string[]) {
@@ -421,13 +421,24 @@ export function formatResumeText(resume: Omit<GeneratedResume, "resume">) {
       ...profile.skills.cloud,
       ...profile.skills.tools,
     ]
-  const certificationLines = resume.selectedCertifications.map((cert) => [
+  const profileCertifications = Array.isArray(profile.certifications) ? profile.certifications : []
+  const profileAchievements = Array.isArray(profile.achievements) ? profile.achievements : []
+  const certificationSource = resume.selectedCertifications.length ? resume.selectedCertifications : profileCertifications
+  const achievementSource = resume.selectedAchievements.length ? resume.selectedAchievements : profileAchievements
+  const profileAchievementSet = new Set(profileAchievements.map(normalize).filter(Boolean))
+  const certificationLines = certificationSource.filter((cert) =>
+    profileCertifications.some((profileCert) =>
+      (cert.id && profileCert.id && cert.id === profileCert.id) || normalize(cert.name) === normalize(profileCert.name)
+    )
+  ).map((cert) => [
     cert.name,
     cert.issuer,
     cert.date,
     cert.credentialId ? `Credential ID: ${cert.credentialId}` : "",
   ].filter(Boolean).join(" | "))
-  const achievementLines = resume.selectedAchievements.map((achievement) => `- ${achievement}`)
+  const achievementLines = achievementSource
+    .filter((achievement) => profileAchievementSet.has(normalize(achievement)))
+    .map((achievement) => `- ${achievement}`)
 
   if (resume.template === "university-law") {
     return [
@@ -578,11 +589,12 @@ export function generateResumeFromJob({
   const matchedKeywords = jobKeywords.filter((keyword) => includesTerm(text, keyword))
   const missingKeywords = jobKeywords.filter((keyword) => !includesTerm(text, keyword)).slice(0, 8)
   const keywordsAdded = unique([...matchedKeywords, ...missingKeywords]).slice(0, 14)
-  const tailoredSkills = buildTailoredSkills(profile, jobDescription, keywordsAdded)
   const isDenseOnePage = template === "original-cv" || template === "university-law"
+  const hasSupplementalSections = profile.certifications.length > 0 || profile.achievements.length > 0
+  const tailoredSkills = buildTailoredSkills(profile, jobDescription, keywordsAdded, isDenseOnePage ? 36 : hasSupplementalSections ? 24 : 30)
   const experienceCount = isDenseOnePage ? Math.min(profile.experience.length, 4) : 3
-  const projectCount = isDenseOnePage ? Math.min(profile.projects.length, 4) : 3
-  const bulletCount = isDenseOnePage ? 8 : 5
+  const projectCount = isDenseOnePage ? Math.min(profile.projects.length, 4) : hasSupplementalSections ? 3 : Math.min(profile.projects.length, 4)
+  const bulletCount = isDenseOnePage ? 8 : hasSupplementalSections ? 5 : 6
   const projectBulletCount = isDenseOnePage ? 5 : 5
   const softwareRoleBoost = (text: string) =>
     includesTerm(jobDescription, "software") || includesTerm(jobDescription, "website") || includesTerm(jobDescription, "LLM")

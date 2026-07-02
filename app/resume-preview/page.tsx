@@ -100,6 +100,80 @@ function getTemplateId(value: string | undefined): TemplateId {
   return value && value in templateStyles ? (value as TemplateId) : fallbackTemplateId
 }
 
+function matchesCertification(left: ResumeCertification, right: ResumeCertification) {
+  return Boolean(
+    (left.id && right.id && left.id === right.id) ||
+    normalizeCompareText(left.name) === normalizeCompareText(right.name)
+  )
+}
+
+function getEnteredCertifications(resume: GeneratedResume, profile: GeneratedResume["profile"]) {
+  const profileCertifications = Array.isArray(profile.certifications) ? profile.certifications : []
+  if (!profileCertifications.length) return []
+
+  const selectedCertifications = Array.isArray(resume.selectedCertifications) ? resume.selectedCertifications : []
+  const sourceCertifications = selectedCertifications.length ? selectedCertifications : profileCertifications
+
+  return sourceCertifications.filter((certification) =>
+    profileCertifications.some((profileCertification) => matchesCertification(certification, profileCertification))
+  )
+}
+
+function getEnteredAchievements(resume: GeneratedResume, profile: GeneratedResume["profile"]) {
+  const profileAchievements = Array.isArray(profile.achievements) ? profile.achievements : []
+  if (!profileAchievements.length) return []
+
+  const selectedAchievements = Array.isArray(resume.selectedAchievements) ? resume.selectedAchievements : []
+  const sourceAchievements = selectedAchievements.length ? selectedAchievements : profileAchievements
+  const profileAchievementSet = new Set(profileAchievements.map(normalizeCompareText).filter(Boolean))
+
+  return sourceAchievements.filter((achievement) => profileAchievementSet.has(normalizeCompareText(achievement)))
+}
+
+function normalizeGeneratedResume(resume: GeneratedResume): GeneratedResume {
+  const profile = resume.profile || fallbackResume.profile
+  const fallbackProfile = fallbackResume.profile
+  const normalizedProfile = {
+    ...fallbackProfile,
+    ...profile,
+    personalInfo: {
+      ...fallbackProfile.personalInfo,
+      ...profile.personalInfo,
+    },
+    skills: {
+      ...fallbackProfile.skills,
+      ...profile.skills,
+    },
+    education: Array.isArray(profile.education) ? profile.education : [],
+    experience: Array.isArray(profile.experience) ? profile.experience : [],
+    projects: Array.isArray(profile.projects) ? profile.projects : [],
+    achievements: Array.isArray(profile.achievements) ? profile.achievements : [],
+    certifications: Array.isArray(profile.certifications) ? profile.certifications : [],
+  }
+  const normalizedResume = {
+    ...fallbackResume,
+    ...resume,
+    profile: normalizedProfile,
+    selectedExperience: Array.isArray(resume.selectedExperience) ? resume.selectedExperience : [],
+    selectedProjects: Array.isArray(resume.selectedProjects) ? resume.selectedProjects : [],
+    selectedCertifications: Array.isArray(resume.selectedCertifications) ? resume.selectedCertifications : [],
+    selectedAchievements: Array.isArray(resume.selectedAchievements) ? resume.selectedAchievements : [],
+    tailoredSkills: Array.isArray(resume.tailoredSkills) ? resume.tailoredSkills : [],
+    matchedKeywords: Array.isArray(resume.matchedKeywords) ? resume.matchedKeywords : [],
+    missingKeywords: Array.isArray(resume.missingKeywords) ? resume.missingKeywords : [],
+    keywordsAdded: Array.isArray(resume.keywordsAdded) ? resume.keywordsAdded : [],
+    changeHighlights: Array.isArray(resume.changeHighlights) ? resume.changeHighlights : [],
+    strengths: Array.isArray(resume.strengths) ? resume.strengths : [],
+    suggestions: Array.isArray(resume.suggestions) ? resume.suggestions : [],
+  }
+
+  return {
+    ...normalizedResume,
+    selectedCertifications: getEnteredCertifications(normalizedResume, normalizedProfile),
+    selectedAchievements: getEnteredAchievements(normalizedResume, normalizedProfile),
+  }
+}
+
 function sanitizeFilename(value: string) {
   return value.replace(/[^a-z0-9_-]+/gi, "_").replace(/^_+|_+$/g, "").toLowerCase()
 }
@@ -418,16 +492,18 @@ function createDocxBlob(text: string, templateId: TemplateId) {
   ])
 }
 
-function mergeProjectsForFullPage(projects: ResumeProject[], profileProjects: ResumeProject[]) {
+function mergeProjectsForFullPage(projects: ResumeProject[], profileProjects: ResumeProject[], hasSupplementalSections: boolean) {
   const merged = [...projects]
+  const projectLimit = hasSupplementalSections ? 3 : 4
+  const highlightLimit = hasSupplementalSections ? 4 : 5
 
   for (const project of profileProjects) {
     const alreadyAdded = merged.some((item) => item.id === project.id || item.name === project.name)
     if (!alreadyAdded) merged.push(project)
-    if (merged.length >= 3) break
+    if (merged.length >= projectLimit) break
   }
 
-  return merged.slice(0, 3).map((project) => {
+  return merged.slice(0, projectLimit).map((project) => {
     const profileProject = profileProjects.find((item) => item.id === project.id || item.name === project.name)
     const highlights = project.highlights?.length ? project.highlights : profileProject?.highlights || []
     const fallbackHighlights = [
@@ -441,7 +517,7 @@ function mergeProjectsForFullPage(projects: ResumeProject[], profileProjects: Re
       ...profileProject,
       ...project,
       technologies: project.technologies?.length ? project.technologies : profileProject?.technologies || [],
-      highlights: Array.from(new Set([...highlights, ...fallbackHighlights])).slice(0, 4),
+      highlights: Array.from(new Set([...highlights, ...fallbackHighlights])).slice(0, highlightLimit),
     }
   })
 }
@@ -538,9 +614,10 @@ function buildUniversityLawDownloadText({
   ].filter(Boolean).join(" | ")
   const certificationLines = generatedResume.selectedCertifications.map(formatCertification)
   const achievementLines = generatedResume.selectedAchievements.map((achievement) => `- ${achievement}`)
+  const hasSupplementalSections = certificationLines.length > 0 || achievementLines.length > 0
   const primaryExperience = generatedResume.selectedExperience.slice(0, 2)
-  const primaryProjects = displayProjects.slice(0, 2)
-  const docxSkills = tailoredSkills.slice(0, 22)
+  const primaryProjects = displayProjects.slice(0, hasSupplementalSections ? 2 : 3)
+  const docxSkills = tailoredSkills.slice(0, hasSupplementalSections ? 22 : 28)
   const compactSummary = compactDocxSummary(generatedResume.improvedSummary || generatedResume.summary)
 
   return [
@@ -565,7 +642,7 @@ function buildUniversityLawDownloadText({
     primaryProjects.length ? "PROJECTS" : "",
     ...primaryProjects.flatMap((project) => [
       `${project.name}\t${project.technologies.slice(0, 8).join(", ")}`,
-      ...project.highlights.slice(0, 3).map((highlight) => `- ${highlight}`),
+      ...project.highlights.slice(0, hasSupplementalSections ? 3 : 5).map((highlight) => `- ${highlight}`),
     ]),
     "TECHNICAL SKILLS",
     docxSkills.join(", "),
@@ -599,7 +676,7 @@ function buildOriginalCvDownloadText({
   displayProjects: ResumeProject[]
 }) {
   const profile = generatedResume.profile
-  const expertise = [
+  const expertiseOptions = [
     "Business Systems Analysis",
     "Python & SQL Programming",
     "Project Management",
@@ -612,9 +689,14 @@ function buildOriginalCvDownloadText({
     "Stakeholder Communication",
     "Requirements Gathering",
     ...tailoredSkills.slice(0, 8),
-  ].filter((item, index, values) => values.findIndex((value) => normalizeCompareText(value) === normalizeCompareText(item)) === index).slice(0, 15)
+  ]
   const certificationLines = generatedResume.selectedCertifications.map(formatCertification)
   const achievementLines = generatedResume.selectedAchievements.map((achievement) => `- ${achievement}`)
+  const hasSupplementalSections = certificationLines.length > 0 || achievementLines.length > 0
+  const expertise = expertiseOptions
+    .filter((item, index, values) => values.findIndex((value) => normalizeCompareText(value) === normalizeCompareText(item)) === index)
+    .slice(0, hasSupplementalSections ? 15 : 18)
+  const projects = displayProjects.slice(0, hasSupplementalSections ? 3 : 4)
 
   return [
     `${profile.personalInfo.firstName} ${profile.personalInfo.lastName}, M.SC.`,
@@ -634,10 +716,10 @@ function buildOriginalCvDownloadText({
       "",
     ]),
     "PROJECTS",
-    ...displayProjects.slice(0, 3).flatMap((project) => [
+    ...projects.flatMap((project) => [
       project.name,
       `Tools: ${project.technologies.slice(0, 10).join(", ")}.`,
-      ...project.highlights.slice(0, displayProjects.length > 1 ? 3 : 5).map((highlight) => `- ${highlight}`),
+      ...project.highlights.slice(0, hasSupplementalSections && projects.length > 1 ? 3 : 5).map((highlight) => `- ${highlight}`),
       "",
     ]),
     "EDUCATION",
@@ -698,6 +780,7 @@ function UniversityLawResume({
   isProjectHighlightGenerated: (projectId: string, projectName: string, highlight: string) => boolean
 }) {
   const profile = generatedResume.profile
+  const hasSupplementalSections = generatedResume.selectedCertifications.length > 0 || generatedResume.selectedAchievements.length > 0
   const contact = [
     profile.personalInfo.location,
     profile.personalInfo.phone,
@@ -786,7 +869,7 @@ function UniversityLawResume({
                 </p>
               )}
               <ul className="list-disc pl-5 text-gray-800" style={{ margin: "0.15em 0 0 0" }}>
-                {project.highlights.slice(0, displayProjects.length > 2 ? 3 : 5).map((highlight, index) => (
+                {project.highlights.slice(0, hasSupplementalSections && displayProjects.length > 2 ? 3 : 5).map((highlight, index) => (
                   <li
                     key={index}
                     className={cn(isProjectHighlightGenerated(project.id, project.name, highlight) && "resume-preview-highlight")}
@@ -867,6 +950,7 @@ function OriginalCvResume({
   isProjectHighlightGenerated: (projectId: string, projectName: string, highlight: string) => boolean
 }) {
   const profile = generatedResume.profile
+  const hasSupplementalSections = generatedResume.selectedCertifications.length > 0 || generatedResume.selectedAchievements.length > 0
   const expertise = [
     "Business Systems Analysis",
     "Python & SQL Programming",
@@ -880,8 +964,8 @@ function OriginalCvResume({
     "Stakeholder Communication",
     "Requirements Gathering",
     ...tailoredSkills.slice(0, 8),
-  ].filter((item, index, values) => values.findIndex((value) => normalizeCompareText(value) === normalizeCompareText(item)) === index).slice(0, 15)
-  const projects = displayProjects.slice(0, 3)
+  ].filter((item, index, values) => values.findIndex((value) => normalizeCompareText(value) === normalizeCompareText(item)) === index).slice(0, hasSupplementalSections ? 15 : 18)
+  const projects = displayProjects.slice(0, hasSupplementalSections ? 3 : 4)
 
   return (
     <div
@@ -954,7 +1038,7 @@ function OriginalCvResume({
                 Tools: {project.technologies.slice(0, 10).join(", ")}.
               </p>
               <ul className="list-disc pl-6 text-gray-900" style={{ margin: "0.1em 0 0 0" }}>
-                {project.highlights.slice(0, projects.length > 1 ? 3 : 5).map((highlight, index) => (
+                {project.highlights.slice(0, hasSupplementalSections && projects.length > 1 ? 3 : 5).map((highlight, index) => (
                   <li
                     key={index}
                     className={cn(isProjectHighlightGenerated(project.id, project.name, highlight) && "resume-preview-highlight")}
@@ -1028,8 +1112,9 @@ export default function ResumePreviewPage() {
     const savedResume = loadLatestGeneratedResume()
     if (!savedResume) return
 
-    setGeneratedResume(savedResume)
-    setSelectedTemplateId(getTemplateId(savedResume.template))
+    const normalizedResume = normalizeGeneratedResume(savedResume)
+    setGeneratedResume(normalizedResume)
+    setSelectedTemplateId(getTemplateId(normalizedResume.template))
   }, [])
 
   const profile = generatedResume.profile
@@ -1046,7 +1131,8 @@ export default function ResumePreviewPage() {
   const isCompact = selectedTemplateId === "compact"
   const isUniversityLaw = selectedTemplateId === "university-law"
   const isOriginalCv = selectedTemplateId === "original-cv"
-  const displayProjects = mergeProjectsForFullPage(generatedResume.selectedProjects, profile.projects)
+  const hasSupplementalSections = generatedResume.selectedCertifications.length > 0 || generatedResume.selectedAchievements.length > 0
+  const displayProjects = mergeProjectsForFullPage(generatedResume.selectedProjects, profile.projects, hasSupplementalSections)
   const downloadText = isOriginalCv
     ? buildOriginalCvDownloadText({ generatedResume, tailoredSkills, displayProjects })
     : isUniversityLaw

@@ -169,6 +169,8 @@ Rules:
 - Certifications and achievements must come only from the candidate data arrays. If those arrays are empty, do not mention or create those sections.
 - If the candidate has real certifications, include a dedicated CERTIFICATIONS section with name, issuer, date, and credential ID only when available.
 - If the candidate has real awards, honors, publications, or measurable achievements, include a dedicated HONORS & ACHIEVEMENTS section. Do not show these sections when the arrays are empty.
+- Apply the certifications/achievements rule and page-filling rule to every template: original-cv, university-law, harvard, modern, executive, and compact.
+- If certifications or achievements are empty, use the available page space for richer supported experience bullets, more relevant project bullets, and a stronger skills section. Do not change the selected template structure.
 - Google context may be used only to understand public role/company language and keywords. Do not add unsupported candidate claims from Google.
 - Return valid JSON only.
 
@@ -181,6 +183,15 @@ Return this exact JSON shape:
   "missingKeywords": ["keyword"],
   "changeHighlights": ["Specific change made to tailor the resume"],
   "suggestions": ["suggestion"],
+  "selectedCertifications": [
+    {
+      "id": "existing certification id if available",
+      "name": "existing certification name",
+      "issuer": "existing issuer",
+      "date": "existing date",
+      "credentialId": "existing credential id if available"
+    }
+  ],
   "selectedAchievements": ["achievement"],
   "tailoredSkills": ["skill"],
   "selectedExperience": [
@@ -263,9 +274,38 @@ function normalizeStringArray(value: unknown, fallback: string[]) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : fallback
 }
 
+function normalizeCompareText(value: string | undefined) {
+  return (value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
+}
+
+function normalizeCertifications(value: Partial<GeneratedResume>["selectedCertifications"], fallback: GeneratedResume) {
+  const profileCertifications = fallback.profile.certifications
+  if (!profileCertifications.length) return []
+
+  const selected = Array.isArray(value) && value.length ? value : fallback.selectedCertifications
+
+  return selected.filter((certification) =>
+    profileCertifications.some((profileCertification) =>
+      (certification.id && profileCertification.id && certification.id === profileCertification.id) ||
+      normalizeCompareText(certification.name) === normalizeCompareText(profileCertification.name)
+    )
+  )
+}
+
+function normalizeAchievements(value: unknown, fallback: GeneratedResume) {
+  const profileAchievements = fallback.profile.achievements
+  if (!profileAchievements.length) return []
+
+  const selected = normalizeStringArray(value, fallback.selectedAchievements)
+  const profileAchievementSet = new Set(profileAchievements.map(normalizeCompareText).filter(Boolean))
+
+  return selected.filter((achievement) => profileAchievementSet.has(normalizeCompareText(achievement)))
+}
+
 function normalizeProjects(value: Partial<GeneratedResume>["selectedProjects"], fallback: GeneratedResume) {
   const isDenseOnePage = fallback.template === "original-cv" || fallback.template === "university-law"
-  const projectLimit = isDenseOnePage ? 4 : 3
+  const hasSupplementalSections = fallback.profile.certifications.length > 0 || fallback.profile.achievements.length > 0
+  const projectLimit = isDenseOnePage ? 4 : hasSupplementalSections ? 3 : 4
   const highlightLimit = isDenseOnePage ? 5 : 4
   const profileProjects = fallback.profile.projects
   const selected = Array.isArray(value) && value.length
@@ -298,8 +338,9 @@ function normalizeProjects(value: Partial<GeneratedResume>["selectedProjects"], 
 
 function normalizeExperience(value: Partial<GeneratedResume>["selectedExperience"], fallback: GeneratedResume) {
   const isDenseOnePage = fallback.template === "original-cv" || fallback.template === "university-law"
+  const hasSupplementalSections = fallback.profile.certifications.length > 0 || fallback.profile.achievements.length > 0
   const experienceLimit = isDenseOnePage ? 4 : 3
-  const bulletLimit = isDenseOnePage ? 8 : 5
+  const bulletLimit = isDenseOnePage ? 8 : hasSupplementalSections ? 5 : 6
   const selected = Array.isArray(value) && value.length ? value : fallback.selectedExperience
   const merged = [...selected]
 
@@ -327,6 +368,7 @@ function normalizeExperience(value: Partial<GeneratedResume>["selectedExperience
 
 function normalizeGroqResume(value: Partial<GeneratedResume>, fallback: GeneratedResume, modelUsed: string): GeneratedResume {
   const isDenseOnePage = fallback.template === "original-cv" || fallback.template === "university-law"
+  const hasSupplementalSections = fallback.profile.certifications.length > 0 || fallback.profile.achievements.length > 0
 
   const normalizedResume: GeneratedResume = {
     ...fallback,
@@ -337,8 +379,9 @@ function normalizeGroqResume(value: Partial<GeneratedResume>, fallback: Generate
     missingKeywords: normalizeStringArray(value.missingKeywords, fallback.missingKeywords),
     changeHighlights: normalizeStringArray(value.changeHighlights, fallback.changeHighlights),
     suggestions: normalizeStringArray(value.suggestions, fallback.suggestions),
-    selectedAchievements: fallback.selectedAchievements.slice(0, isDenseOnePage ? 8 : 5),
-    tailoredSkills: normalizeStringArray(value.tailoredSkills, fallback.tailoredSkills).slice(0, isDenseOnePage ? 36 : 24),
+    selectedCertifications: normalizeCertifications(value.selectedCertifications, fallback),
+    selectedAchievements: normalizeAchievements(value.selectedAchievements, fallback).slice(0, isDenseOnePage ? 8 : 5),
+    tailoredSkills: normalizeStringArray(value.tailoredSkills, fallback.tailoredSkills).slice(0, isDenseOnePage ? 36 : hasSupplementalSections ? 24 : 30),
     selectedExperience: normalizeExperience(value.selectedExperience, fallback),
     selectedProjects: normalizeProjects(value.selectedProjects, fallback),
     improvedSummary: typeof value.improvedSummary === "string" && value.improvedSummary.trim() ? value.improvedSummary : fallback.improvedSummary,
