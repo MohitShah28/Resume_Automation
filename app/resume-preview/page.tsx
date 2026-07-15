@@ -219,6 +219,11 @@ function openResumePrintWindow(resumeNode: HTMLElement, fileBaseName: string) {
     ${styleTags}
     <style>
       @page { size: letter; margin: 0; }
+      * {
+        font-variant-ligatures: none !important;
+        -webkit-font-variant-ligatures: none !important;
+        font-feature-settings: "liga" 0, "clig" 0, "dlig" 0 !important;
+      }
       html, body {
         width: 8.5in;
         height: 11in;
@@ -558,7 +563,7 @@ function buildDownloadText({
   return [
     `${profile.personalInfo.firstName} ${profile.personalInfo.lastName}`,
     `${profile.personalInfo.email} | ${profile.personalInfo.phone} | ${profile.personalInfo.location}`,
-    `${profile.personalInfo.linkedin} | ${profile.personalInfo.github} | ${profile.personalInfo.portfolio}`,
+    [profile.personalInfo.linkedin, profile.personalInfo.github].filter(Boolean).join(" | "),
     "",
     "PROFESSIONAL SUMMARY",
     generatedResume.improvedSummary || generatedResume.summary,
@@ -610,7 +615,6 @@ function buildUniversityLawDownloadText({
   const links = [
     profile.personalInfo.linkedin,
     profile.personalInfo.github,
-    profile.personalInfo.portfolio,
   ].filter(Boolean).join(" | ")
   const certificationLines = generatedResume.selectedCertifications.map(formatCertification)
   const achievementLines = generatedResume.selectedAchievements.map((achievement) => `- ${achievement}`)
@@ -789,7 +793,6 @@ function UniversityLawResume({
   const links = [
     profile.personalInfo.linkedin,
     profile.personalInfo.github,
-    profile.personalInfo.portfolio,
   ].filter(Boolean).join(" | ")
 
   return (
@@ -1177,14 +1180,32 @@ export default function ResumePreviewPage() {
         pageNode.clientHeight -
         Number.parseFloat(computedStyle.paddingTop) -
         Number.parseFloat(computedStyle.paddingBottom)
-      const contentHeight = contentNode.scrollHeight
 
-      if (availableHeight <= 0 || contentHeight <= 0) {
+      if (availableHeight <= 0) {
         setFitScale(1)
         return
       }
 
-      setFitScale(Math.min(1, availableHeight / contentHeight))
+      // Iterate width compensation + height measurement to a fixed point here,
+      // synchronously, instead of looping through React state updates.
+      // Scale down when content overflows the page, and up (capped, so type
+      // stays a normal size) when content runs short, so the page is filled.
+      const MAX_FILL_SCALE = 1.18
+      let scale = 1
+      for (let iteration = 0; iteration < 5; iteration += 1) {
+        contentNode.style.width = `${100 / scale}%`
+        const contentHeight = contentNode.scrollHeight
+        if (contentHeight <= 0) break
+        const nextScale = Math.min(MAX_FILL_SCALE, availableHeight / contentHeight)
+        if (Math.abs(nextScale - scale) <= 0.005) {
+          scale = nextScale
+          break
+        }
+        scale = nextScale
+      }
+
+      contentNode.style.width = `${100 / scale}%`
+      setFitScale(scale)
     }
 
     updateFitScale()
@@ -1293,6 +1314,7 @@ export default function ResumePreviewPage() {
                     ref={resumeContentRef}
                     className="resume-page-content"
                     style={{
+                      width: `${100 / fitScale}%`,
                       transform: `scale(${fitScale})`,
                       transformOrigin: "top left",
                     }}
@@ -1329,7 +1351,7 @@ export default function ResumePreviewPage() {
                       {profile.personalInfo.email} | {profile.personalInfo.phone} | {profile.personalInfo.location}
                     </p>
                     <p className={resumeTemplate.contact} style={{ fontSize: "11px", margin: "0.1em 0 0 0" }}>
-                      {profile.personalInfo.linkedin} | {profile.personalInfo.github} | {profile.personalInfo.portfolio}
+                      {[profile.personalInfo.linkedin, profile.personalInfo.github].filter(Boolean).join(" | ")}
                     </p>
                   </div>
 

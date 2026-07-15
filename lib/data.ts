@@ -128,19 +128,6 @@ export const mockProfile = {
         "Generated automated PDF reports, cleaned dataset exports, backup recovery flows, and cleaning audit logs for transparency",
         "Designed a responsive SaaS-style dashboard UI with module cards, workflow access, report management, and modular multi-page architecture"
       ]
-    },
-    {
-      id: "4",
-      name: "Portfolio Website and Analytics Case Studies",
-      description: "Personal portfolio presenting data analytics projects, public resume, project case studies, media assets, and contact channels for freelance and professional opportunities.",
-      technologies: ["Portfolio Website", "Project Documentation", "Data Storytelling", "GitHub", "Resume PDF", "Visual Assets"],
-      link: "https://www.mohitshah.dev/",
-      highlights: [
-        "Published detailed case studies covering objectives, tools, metrics, methodology, business impact, features, challenges, and future enhancements",
-        "Showcased HR visuals including attrition distribution, department-wise attrition rate, feature importance, and predicted attrition risk by department",
-        "Showcased customer analytics visuals including purchases by age group, purchases by marital status, customer purchase channels, and campaign responses",
-        "Showcased Cleanlytics AI screens including home dashboard, dataset profiling, schema report, cleaning results, outlier results, reports, exports, and report details"
-      ]
     }
   ],
   skills: {

@@ -51,14 +51,14 @@ export type GenerateResumePayload = {
 
 export type GenerateResumeApiResponse = {
   resume: GeneratedResume
-  source: "groq" | "gemini" | "local"
+  source: "claude" | "groq" | "gemini" | "local"
   modelUsed?: string
   tokenUsage?: ResumeTokenUsage
   warning?: string
 }
 
 export type ResumeTokenUsage = {
-  provider: "groq" | "gemini"
+  provider: "claude" | "groq" | "gemini"
   model: string
   apiKeyIndex: number
   promptTokens: number
@@ -255,6 +255,21 @@ function unique(values: string[]) {
   return Array.from(new Set(values.filter(Boolean)))
 }
 
+function dateValue(value: string | undefined) {
+  if (!value) return 0
+  if (/present|current|ongoing/i.test(value)) return Number.MAX_SAFE_INTEGER
+  const parsed = Date.parse(value)
+  if (!Number.isNaN(parsed)) return parsed
+  const year = value.match(/\d{4}/)
+  return year ? Date.parse(`${year[0]}-01-01`) : 0
+}
+
+export function sortExperienceByRecency<T extends { startDate?: string; endDate?: string }>(experience: T[]) {
+  return [...experience].sort(
+    (a, b) => dateValue(b.endDate) - dateValue(a.endDate) || dateValue(b.startDate) - dateValue(a.startDate)
+  )
+}
+
 function profileText(profile: ProfileData) {
   return [
     profile.personalInfo.summary,
@@ -315,12 +330,7 @@ function scoreText(text: string, keywords: string[]) {
 function tailorBullets(bullets: string[], keywords: string[], jobDescription: string, targetCount = 5) {
   const selectedKeywords = keywords.slice(0, 6)
   const roleFocus = selectedKeywords.slice(0, 3).join(", ")
-  const tailored = bullets.slice(0, targetCount).map((bullet, index) => {
-    const verb = actionVerbs[index % actionVerbs.length]
-    const keyword = selectedKeywords[index % Math.max(selectedKeywords.length, 1)]
-    if (!keyword || includesTerm(bullet, keyword)) return bullet
-    return `${verb} ${bullet.charAt(0).toLowerCase()}${bullet.slice(1)}, with emphasis on ${keyword}`
-  })
+  const tailored = bullets.slice(0, targetCount)
 
   if (tailored.length >= targetCount) return tailored
 
@@ -351,6 +361,9 @@ function buildTailoredSkills(profile: ProfileData, jobDescription: string, keywo
     ...Object.values(profile.skills).flat(),
     ...profile.projects.flatMap((project) => project.technologies),
     ...keywords.filter((keyword) => includesTerm(candidateText, keyword)),
+    // Job-required skills missing from the profile, limited to the curated bank
+    // so arbitrary capitalized words from the posting don't leak into skills.
+    ...keywordBank.filter((keyword) => includesTerm(jobDescription, keyword)),
   ])
 
   return allSkills
@@ -385,16 +398,11 @@ function tailorProjectHighlights(project: ProfileData["projects"][number], keywo
     keywords.some((keyword) => includesTerm(technology, keyword) || includesTerm(keyword, technology)) ||
     includesTerm(jobDescription, technology)
   )
-  const rewrittenHighlights = existingHighlights.slice(0, targetCount).map((highlight, index) => {
-    const keyword = relevantKeywords[index % Math.max(relevantKeywords.length, 1)]
-    const technology = relevantTechnologies[index % Math.max(relevantTechnologies.length, 1)]
-    const supportTerm = keyword || technology
-
-    if (!supportTerm || includesTerm(highlight, supportTerm)) return highlight
-    return `${highlight}, emphasizing ${supportTerm}`
-  })
+  const rewrittenHighlights = existingHighlights.slice(0, targetCount)
   const supportedAdditions = [
-    project.description ? `Delivered ${project.description.charAt(0).toLowerCase()}${project.description.slice(1)}` : "",
+    project.description
+      ? `Delivered ${/^[A-Z][a-z]/.test(project.description) ? project.description.charAt(0).toLowerCase() + project.description.slice(1) : project.description}`
+      : "",
     relevantTechnologies.length
       ? `Used ${relevantTechnologies.slice(0, 5).join(", ")} to support project implementation and analysis`
       : "",
@@ -444,7 +452,7 @@ export function formatResumeText(resume: Omit<GeneratedResume, "resume">) {
     return [
       `${profile.personalInfo.firstName} ${profile.personalInfo.lastName}`.toUpperCase(),
       `${profile.personalInfo.location} | ${profile.personalInfo.phone} | ${profile.personalInfo.email}`,
-      [profile.personalInfo.linkedin, profile.personalInfo.github, profile.personalInfo.portfolio].filter(Boolean).join(" | "),
+      [profile.personalInfo.linkedin, profile.personalInfo.github].filter(Boolean).join(" | "),
       "",
       "PROFILE",
       resume.improvedSummary,
@@ -538,7 +546,7 @@ export function formatResumeText(resume: Omit<GeneratedResume, "resume">) {
   return [
     `${profile.personalInfo.firstName} ${profile.personalInfo.lastName}`,
     `${profile.personalInfo.email} | ${profile.personalInfo.phone} | ${profile.personalInfo.location}`,
-    `${profile.personalInfo.linkedin} | ${profile.personalInfo.github} | ${profile.personalInfo.portfolio}`,
+    [profile.personalInfo.linkedin, profile.personalInfo.github].filter(Boolean).join(" | "),
     "",
     "PROFESSIONAL SUMMARY",
     resume.improvedSummary,
@@ -601,7 +609,7 @@ export function generateResumeFromJob({
       ? scoreText(text, ["JavaScript", "TypeScript", "Python", "AI", "LLMs", "Automation", "Dashboard", "API", "OpenAI", "Next.js"]) * 2
       : 0
 
-  const selectedExperience = profile.experience
+  const selectedExperience = sortExperienceByRecency(profile.experience
     .map((exp) => ({
       ...exp,
       description: tailorBullets(exp.description, keywordsAdded, jobDescription, bulletCount),
@@ -611,7 +619,7 @@ export function generateResumeFromJob({
     }))
     .sort((a, b) => b.score - a.score)
     .slice(0, experienceCount)
-    .map(({ score: _score, ...exp }) => exp)
+    .map(({ score: _score, ...exp }) => exp))
 
   const selectedProjects = profile.projects
     .map((project) => ({

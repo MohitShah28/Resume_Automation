@@ -1,3 +1,4 @@
+import Anthropic from "@anthropic-ai/sdk"
 import Groq from "groq-sdk"
 import { NextResponse } from "next/server"
 import { appendFile, mkdir } from "node:fs/promises"
@@ -9,6 +10,7 @@ import {
   formatResumeText,
   generateResumeFromJob,
   payloadToProfile,
+  sortExperienceByRecency,
 } from "@/lib/resume-generator"
 
 const GROQ_MODELS = [
@@ -18,7 +20,11 @@ const GROQ_MODELS = [
 ] as const
 
 const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
-const MAX_OUTPUT_TOKENS = 3600
+const DEFAULT_CLAUDE_MODEL = "claude-opus-4-8"
+const MAX_OUTPUT_TOKENS = 8000
+// Groq free tier counts prompt + max_tokens against a 12k tokens-per-minute cap,
+// so the Groq request must reserve far less output budget than Gemini.
+const GROQ_MAX_OUTPUT_TOKENS = 3000
 const SYSTEM_PROMPT = "You write truthful ATS resumes and return valid JSON only."
 
 type GroqCompletionUsage = {
@@ -148,7 +154,14 @@ Create a content-rich, one-page ATS resume tailored to the job.
 
 Rules:
 - Use only truthful candidate data. Do not invent companies, degrees, dates, metrics, certifications, or work experience.
+- Never fabricate numbers: no invented percentages, counts, team sizes, or revenue figures. Use a number only when it appears in the candidate data.
 - If the job starts with PROFILE_ONLY_RESUME_REQUEST, make a strong general resume from the profile.
+- Tailoring goals, in priority order:
+  1. Rewrite the professional summary (improvedSummary) specifically for this job: name the target role, the candidate's strongest matching skills, and their fit for the role's goals in 3-4 sentences that naturally use the job description's own keywords.
+  2. For each selected experience entry, rewrite the existing bullets AND add new bullets that connect the candidate's documented responsibilities to this job's requirements, phrased with the job description's terminology.
+  3. For each selected project, add or rewrite bullets so the project clearly demonstrates the skills and technologies this job requires, whenever the project's real scope makes that plausible. Reframe existing work using the job's terminology rather than inventing new work.
+  4. In tailoredSkills, cover the job's required skills: include every required skill supported anywhere in the profile, plus important job keywords the candidate could credibly list based on adjacent experience. Order by relevance to this job. Do not include generic non-skill words.
+  5. Maximize ATS keyword match between the resume text and the job description so the resume ranks highly in applicant tracking systems.
 - Rewrite bullets professionally, select relevant projects, and add ATS keywords naturally.
 - Return full, substantive content when supported by the candidate profile: 6-8 bullets for the strongest experience entries and 4-5 bullets for each selected project.
 - Make bullets specific, action-oriented, and outcome-focused. Prefer what was built, analyzed, automated, improved, tested, deployed, or presented.
@@ -157,8 +170,8 @@ Rules:
   2. Compare those requirements against every project in the candidate profile.
   3. Select the most relevant projects and rewrite each selected project's description and highlights to emphasize supported work that matches the target role.
   4. Leave unrelated projects mostly unchanged or omit them if stronger projects exist.
-  5. Add project bullets only when the work is clearly supported by the original project description, original highlights, technologies, or profile data.
-- For selectedProjects, preserve the original project id/name/link and do not add technologies that are not already listed for that project.
+  5. Ground added project bullets in the project's real scope, technologies, or profile data, and phrase them with the job's required skills and terminology.
+- For selectedProjects, preserve the original project id/name/link. Only add a technology to a project's technologies list when the job requires it and it plausibly fits that project's real stack.
 - For software, AI, LLM, web, startup, API, or automation roles, emphasize supported software/product/automation work.
 - Return changeHighlights explaining the main edits made compared with the candidate profile/job input.
 - Use plain ATS formatting only. No tables, columns, icons, markdown fences, or extra commentary.
@@ -171,12 +184,12 @@ Rules:
 - If the candidate has real awards, honors, publications, or measurable achievements, include a dedicated HONORS & ACHIEVEMENTS section. Do not show these sections when the arrays are empty.
 - Apply the certifications/achievements rule and page-filling rule to every template: original-cv, university-law, harvard, modern, executive, and compact.
 - If certifications or achievements are empty, use the available page space for richer supported experience bullets, more relevant project bullets, and a stronger skills section. Do not change the selected template structure.
+- The resume must visually fill one full page. When the profile has 3 or fewer projects, write 5-6 substantive bullets for each selected project and a fuller 4-sentence professional summary, all grounded in the candidate's real work.
 - Google context may be used only to understand public role/company language and keywords. Do not add unsupported candidate claims from Google.
 - Return valid JSON only.
 
-Return this exact JSON shape:
+Return this exact JSON shape (do not include full resume text — it is assembled from the fields below):
 {
-  "resume": "Full final resume as ATS-friendly plain text with sections",
   "atsScore": 0,
   "matchSummary": "Short explanation of how well the resume matches the job",
   "matchedKeywords": ["keyword"],
@@ -220,7 +233,7 @@ Return this exact JSON shape:
 
 Candidate data:
 ${JSON.stringify({
-  personalInfo: payload.personalInfo,
+  personalInfo: { ...payload.personalInfo, portfolio: "" },
   professionalSummary: payload.professionalSummary,
   education: payload.education,
   workExperience: payload.workExperience,
@@ -258,11 +271,75 @@ function extractJsonObject(content: string) {
   return "{}"
 }
 
+// Scans from the first "{" and returns the substring up to the matching top-level
+// close. If the JSON is truncated mid-stream, drops the trailing partial token and
+// appends the closers needed to make it parseable, so a mostly-complete LLM
+// response is salvaged instead of silently replaced by the local fallback.
+function balanceJson(text: string) {
+  let inString = false
+  let escape = false
+  const stack: string[] = []
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]
+    if (escape) {
+      escape = false
+      continue
+    }
+    if (char === "\\") {
+      escape = inString
+      continue
+    }
+    if (char === '"') {
+      inString = !inString
+      continue
+    }
+    if (inString) continue
+    if (char === "{" || char === "[") stack.push(char)
+    else if (char === "}" || char === "]") {
+      stack.pop()
+      if (stack.length === 0) return text.slice(0, index + 1)
+    }
+  }
+
+  let repaired = inString ? `${text}"` : text
+  repaired = repaired.replace(/,\s*"[^"]*"?\s*:?\s*$/, "").replace(/[,:]\s*$/, "")
+  return repaired + stack.reverse().map((char) => (char === "{" ? "}" : "]")).join("")
+}
+
+function repairJson(value: string) {
+  const start = value.indexOf("{")
+  if (start < 0) return "{}"
+  const text = value.slice(start)
+  let cut = text.length
+
+  for (let attempt = 0; attempt < 40 && cut > 1; attempt += 1) {
+    const candidate = balanceJson(text.slice(0, cut))
+    try {
+      JSON.parse(candidate)
+      return candidate
+    } catch {
+      cut = Math.max(
+        text.lastIndexOf(",", cut - 2),
+        text.lastIndexOf("}", cut - 2),
+        text.lastIndexOf("]", cut - 2),
+        text.lastIndexOf('"', cut - 2)
+      )
+    }
+  }
+
+  return "{}"
+}
+
 function parseGroqJson(content: string) {
   try {
     return JSON.parse(extractJsonObject(content)) as Partial<GeneratedResume>
   } catch {
-    return {}
+    try {
+      return JSON.parse(repairJson(content)) as Partial<GeneratedResume>
+    } catch {
+      return {}
+    }
   }
 }
 
@@ -350,7 +427,7 @@ function normalizeExperience(value: Partial<GeneratedResume>["selectedExperience
     if (merged.length >= experienceLimit) break
   }
 
-  return merged.slice(0, experienceLimit).map((experience) => {
+  const normalized = merged.slice(0, experienceLimit).map((experience) => {
     const fallbackExperience = fallback.selectedExperience.find(
       (item) => item.id === experience.id || `${item.company}-${item.position}` === `${experience.company}-${experience.position}`
     )
@@ -361,9 +438,14 @@ function normalizeExperience(value: Partial<GeneratedResume>["selectedExperience
     return {
       ...fallbackExperience,
       ...experience,
-      description: Array.from(new Set([...description, ...(fallbackExperience?.description || [])])).slice(0, bulletLimit),
+      description: (description.length >= 4
+        ? description
+        : Array.from(new Set([...description, ...(fallbackExperience?.description || [])]))
+      ).slice(0, bulletLimit),
     }
   })
+
+  return sortExperienceByRecency(normalized)
 }
 
 function normalizeGroqResume(value: Partial<GeneratedResume>, fallback: GeneratedResume, modelUsed: string): GeneratedResume {
@@ -373,7 +455,10 @@ function normalizeGroqResume(value: Partial<GeneratedResume>, fallback: Generate
   const normalizedResume: GeneratedResume = {
     ...fallback,
     resume: fallback.resume,
-    atsScore: typeof value.atsScore === "number" ? Math.max(0, Math.min(100, value.atsScore)) : fallback.atsScore,
+    atsScore:
+      typeof value.atsScore === "number"
+        ? Math.max(0, Math.min(100, value.atsScore > 0 && value.atsScore <= 1 ? Math.round(value.atsScore * 100) : Math.round(value.atsScore)))
+        : fallback.atsScore,
     matchSummary: typeof value.matchSummary === "string" && value.matchSummary.trim() ? value.matchSummary : fallback.matchSummary,
     matchedKeywords: normalizeStringArray(value.matchedKeywords, fallback.matchedKeywords),
     missingKeywords: normalizeStringArray(value.missingKeywords, fallback.missingKeywords),
@@ -414,7 +499,7 @@ function getGroqErrorDetails(error: unknown) {
 
 function isRateLimitError(error: unknown) {
   const details = getGroqErrorDetails(error)
-  return details.status === 429 || details.code === "rate_limit_exceeded"
+  return details.status === 429 || details.status === 413 || details.code === "rate_limit_exceeded"
 }
 
 function getGroqApiKeys() {
@@ -436,6 +521,154 @@ function getGeminiApiKey() {
 
 function getGeminiModel() {
   return process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL
+}
+
+function getClaudeApiKey() {
+  const apiKey = process.env.ANTHROPIC_API_KEY?.trim()
+  return apiKey && apiKey !== "your_anthropic_api_key_here" ? apiKey : ""
+}
+
+function getClaudeModel() {
+  return process.env.ANTHROPIC_MODEL?.trim() || DEFAULT_CLAUDE_MODEL
+}
+
+// Structured-output schema so the API guarantees valid JSON in the exact shape
+// the normalizers expect — no truncation repair needed on this path.
+const RESUME_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "atsScore",
+    "matchSummary",
+    "matchedKeywords",
+    "missingKeywords",
+    "changeHighlights",
+    "suggestions",
+    "selectedCertifications",
+    "selectedAchievements",
+    "tailoredSkills",
+    "selectedExperience",
+    "selectedProjects",
+    "improvedSummary",
+  ],
+  properties: {
+    atsScore: { type: "integer" },
+    matchSummary: { type: "string" },
+    matchedKeywords: { type: "array", items: { type: "string" } },
+    missingKeywords: { type: "array", items: { type: "string" } },
+    changeHighlights: { type: "array", items: { type: "string" } },
+    suggestions: { type: "array", items: { type: "string" } },
+    selectedCertifications: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "name", "issuer", "date", "credentialId"],
+        properties: {
+          id: { type: "string" },
+          name: { type: "string" },
+          issuer: { type: "string" },
+          date: { type: "string" },
+          credentialId: { type: "string" },
+        },
+      },
+    },
+    selectedAchievements: { type: "array", items: { type: "string" } },
+    tailoredSkills: { type: "array", items: { type: "string" } },
+    selectedExperience: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "company", "position", "location", "startDate", "endDate", "description"],
+        properties: {
+          id: { type: "string" },
+          company: { type: "string" },
+          position: { type: "string" },
+          location: { type: "string" },
+          startDate: { type: "string" },
+          endDate: { type: "string" },
+          description: { type: "array", items: { type: "string" } },
+        },
+      },
+    },
+    selectedProjects: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "name", "description", "technologies", "link", "highlights"],
+        properties: {
+          id: { type: "string" },
+          name: { type: "string" },
+          description: { type: "string" },
+          technologies: { type: "array", items: { type: "string" } },
+          link: { type: "string" },
+          highlights: { type: "array", items: { type: "string" } },
+        },
+      },
+    },
+    improvedSummary: { type: "string" },
+  },
+} as const
+
+async function requestClaudeResume({
+  apiKey,
+  model,
+  payload,
+  fallback,
+  googleContext,
+}: {
+  apiKey: string
+  model: string
+  payload: GenerateResumePayload
+  fallback: GeneratedResume
+  googleContext: string
+}) {
+  const userPrompt = buildPrompt(payload, fallback, googleContext)
+  const anthropic = new Anthropic({ apiKey })
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 16000,
+    thinking: { type: "adaptive" },
+    system: SYSTEM_PROMPT,
+    output_config: { format: { type: "json_schema", schema: RESUME_JSON_SCHEMA } },
+    messages: [{ role: "user", content: userPrompt }],
+  })
+
+  if (response.stop_reason === "refusal") {
+    throw new Error("Claude declined the request.")
+  }
+
+  const content = response.content
+    .filter((block): block is Anthropic.TextBlock => block.type === "text")
+    .map((block) => block.text)
+    .join("")
+  const parsed = parseGroqJson(content)
+  const tokenUsage: ResumeTokenUsage = {
+    provider: "claude",
+    model,
+    apiKeyIndex: 1,
+    promptTokens: response.usage.input_tokens,
+    completionTokens: response.usage.output_tokens,
+    totalTokens: response.usage.input_tokens + response.usage.output_tokens,
+  }
+
+  await saveGenerationRunLog({
+    tokenUsage,
+    payload,
+    fallback,
+    systemPrompt: SYSTEM_PROMPT,
+    userPrompt,
+    rawContent: content,
+    parsedJson: parsed,
+  })
+
+  return {
+    resume: normalizeGroqResume(parsed, fallback, model),
+    tokenUsage,
+  }
 }
 
 function getTokenUsage(completion: { usage?: GroqCompletionUsage }, model: string, apiKeyIndex: number): ResumeTokenUsage | undefined {
@@ -483,33 +716,46 @@ async function requestGeminiResume({
   const url = new URL(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`)
   url.searchParams.set("key", apiKey)
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      systemInstruction: {
-        parts: [{ text: SYSTEM_PROMPT }],
+  const requestBody = JSON.stringify({
+    systemInstruction: {
+      parts: [{ text: SYSTEM_PROMPT }],
+    },
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: userPrompt }],
       },
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: userPrompt }],
-        },
-      ],
-      generationConfig: {
-        temperature: 0.35,
-        maxOutputTokens: MAX_OUTPUT_TOKENS,
-        responseMimeType: "application/json",
-      },
-    }),
+    ],
+    generationConfig: {
+      temperature: 0.35,
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      responseMimeType: "application/json",
+    },
   })
 
-  const data = (await response.json().catch(() => ({}))) as GeminiGenerateContentResponse
-  if (!response.ok) {
+  let data: GeminiGenerateContentResponse = {}
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: requestBody,
+    })
+
+    data = (await response.json().catch(() => ({}))) as GeminiGenerateContentResponse
+    if (response.ok) break
+
+    // Overload (503) and rate limit (429) are usually transient — retry once.
+    if (attempt === 0 && (response.status === 503 || response.status === 429)) {
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+      continue
+    }
     throw new Error(data.error?.message || `Gemini request failed with status ${response.status}`)
   }
 
-  const content = data.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "{}"
+  const content = data.candidates?.[0]?.content?.parts
+    ?.filter((part) => !(part as { thought?: boolean }).thought)
+    .map((part) => part.text || "")
+    .join("") || "{}"
   const parsed = parseJsonContent(content)
   const tokenUsage = getGeminiTokenUsage(data, model)
   await saveGenerationRunLog({
@@ -616,6 +862,31 @@ export async function POST(request: Request) {
   const googleContext = await getGoogleJobContext(payload, fallback)
   const providerWarnings: string[] = []
 
+  const claudeApiKey = getClaudeApiKey()
+  const claudeEnabled = process.env.ANTHROPIC_API_ENABLED !== "false"
+
+  if (claudeEnabled && claudeApiKey) {
+    try {
+      const claudeModel = getClaudeModel()
+      const { resume, tokenUsage } = await requestClaudeResume({
+        apiKey: claudeApiKey,
+        model: claudeModel,
+        payload,
+        fallback,
+        googleContext,
+      })
+
+      return NextResponse.json({
+        resume,
+        source: "claude",
+        modelUsed: claudeModel,
+        tokenUsage,
+      })
+    } catch (error) {
+      providerWarnings.push(error instanceof Error ? `Claude failed: ${error.message}` : "Claude failed.")
+    }
+  }
+
   if (geminiEnabled && geminiApiKey) {
     try {
       const geminiModel = getGeminiModel()
@@ -680,7 +951,7 @@ export async function POST(request: Request) {
               },
             ],
             temperature: 0.35,
-            max_tokens: MAX_OUTPUT_TOKENS,
+            max_tokens: GROQ_MAX_OUTPUT_TOKENS,
             response_format: { type: "json_object" },
           })
 
@@ -703,6 +974,7 @@ export async function POST(request: Request) {
             source: "groq",
             modelUsed: groqModel,
             tokenUsage,
+            ...(providerWarnings.length ? { warning: providerWarnings.join(" ") } : {}),
           })
         } catch (error) {
           if (isRateLimitError(error)) {

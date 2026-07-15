@@ -20,6 +20,19 @@ function cloneProfile(profile: ProfileData): ProfileData {
   return structuredClone(profile)
 }
 
+// Projects removed from the knowledge base; filtered out of previously saved
+// profiles on load so removal doesn't require a full profile reset.
+const REMOVED_PROJECT_NAMES = new Set(["portfolio website and analytics case studies"])
+
+function stripRemovedProjects(profile: ProfileData): ProfileData {
+  return {
+    ...profile,
+    projects: (profile.projects || []).filter(
+      (project) => !REMOVED_PROJECT_NAMES.has((project.name || "").trim().toLowerCase())
+    ),
+  }
+}
+
 function readJson<T>(key: string): T | null {
   try {
     const value = window.localStorage.getItem(key)
@@ -39,7 +52,7 @@ export function loadMasterProfile(): ProfileData {
   }
 
   const savedProfile = readJson<ProfileData>(MASTER_PROFILE_KEY) || readJson<ProfileData>(LEGACY_PROFILE_KEY)
-  return cloneProfile(savedProfile || mockProfile)
+  return stripRemovedProjects(cloneProfile(savedProfile || mockProfile))
 }
 
 export function createProfileWorkingCopy(): ProfileData {
