@@ -1114,8 +1114,22 @@ export default function ResumePreviewPage() {
   const resumePrintRef = useRef<HTMLDivElement>(null)
   const resumePageRef = useRef<HTMLDivElement>(null)
   const resumeContentRef = useRef<HTMLDivElement>(null)
+  const previewContainerRef = useRef<HTMLDivElement>(null)
   const [zoom, setZoom] = useState(100)
   const [fitScale, setFitScale] = useState(1)
+  const [containerScale, setContainerScale] = useState(1)
+
+  // Fit the letter-size page to the preview column so it never clips on
+  // narrow screens (laptop, tablet, phone). Zoom multiplies on top of this.
+  useEffect(() => {
+    const node = previewContainerRef.current
+    if (!node) return
+    const observer = new ResizeObserver(() => {
+      setContainerScale(Math.min(1, node.clientWidth / RESUME_PAGE_WIDTH))
+    })
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [])
   const [isEditMode, setIsEditMode] = useState(false)
   const [generatedResume, setGeneratedResume] = useState<GeneratedResume>(fallbackResume)
   const [selectedTemplateId, setSelectedTemplateId] = useState<TemplateId>(getTemplateId(fallbackResume.template))
@@ -1151,7 +1165,7 @@ export default function ResumePreviewPage() {
     ? buildUniversityLawDownloadText({ generatedResume, tailoredSkills, displayProjects })
     : buildDownloadText({ generatedResume, tailoredSkills, displayProjects })
   const fileBaseName = sanitizeFilename(`${profile.personalInfo.firstName}_${profile.personalInfo.lastName}_resume`) || "resume"
-  const screenZoomScale = zoom / 100
+  const screenZoomScale = (zoom / 100) * containerScale
   const profileSkillSet = getProfileSkills(profile)
   const isSummaryGenerated = isGeneratedText(generatedResume.improvedSummary || generatedResume.summary, [
     profile.personalInfo.summary,
@@ -1360,6 +1374,7 @@ export default function ResumePreviewPage() {
               </div>
 
               {/* Document */}
+              <div ref={previewContainerRef} className="overflow-auto">
               <motion.div
                 ref={resumePrintRef}
                 initial={{ opacity: 0, y: 20 }}
@@ -1369,7 +1384,6 @@ export default function ResumePreviewPage() {
                 style={{
                   width: `${RESUME_PAGE_WIDTH * screenZoomScale}px`,
                   height: `${RESUME_PAGE_HEIGHT * screenZoomScale}px`,
-                  maxWidth: "100%",
                   boxSizing: "border-box",
                   display: "block",
                 }}
@@ -1580,6 +1594,7 @@ export default function ResumePreviewPage() {
                   </div>
                 </div>
               </motion.div>
+              </div>
             </AnimatedCard>
           </div>
 

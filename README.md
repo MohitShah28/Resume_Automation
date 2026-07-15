@@ -44,7 +44,16 @@ Resume templates: `modern` (default), `compact`, `original-cv`, `university-law`
 
 ## Getting Started
 
-**Prerequisites:** Node.js 20+ and pnpm (`corepack enable` is the easiest way).
+**Quick setup (recommended):** install [Node.js 20+ (LTS)](https://nodejs.org), then run the setup script — it checks Node, sets up pnpm, installs dependencies, and creates `.env.local` for you:
+
+```bash
+bash setup.sh    # Mac / Linux
+setup.bat        # Windows (or double-click it)
+```
+
+See [SETUP.md](SETUP.md) for a step-by-step student guide with troubleshooting.
+
+**Manual setup:** Node.js 20+ and pnpm (`corepack enable` is the easiest way).
 
 ```bash
 # 1. Install dependencies
