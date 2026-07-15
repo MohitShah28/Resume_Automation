@@ -12,8 +12,11 @@ import {
   TrendingUp,
   Edit,
   ExternalLink,
-  Copy
+  Copy,
+  Mail,
+  Loader2
 } from "lucide-react"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { AppLayout } from "@/components/layout/app-layout"
 import { AnimatedCard } from "@/components/ui/animated-card"
 import { AtsScoreCircle } from "@/components/ui/ats-score-circle"
@@ -21,7 +24,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { mockProfile } from "@/lib/data"
 import { GeneratedResume, generateResumeFromJob } from "@/lib/resume-generator"
-import { loadLatestGeneratedResume } from "@/lib/profile-storage"
+import { loadGeneratedResumes, loadLatestGeneratedResume } from "@/lib/profile-storage"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 
@@ -189,14 +192,7 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url)
 }
 
-function openResumePrintWindow(resumeNode: HTMLElement, fileBaseName: string) {
-  const printWindow = window.open("", "_blank", "width=980,height=1200")
-
-  if (!printWindow) {
-    toast.error("Please allow popups to export the PDF.")
-    return false
-  }
-
+function buildResumePrintHtml(resumeNode: HTMLElement, fileBaseName: string, options?: { forServer?: boolean }) {
   const styleTags = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
     .map((node) => node.outerHTML)
     .join("\n")
@@ -211,11 +207,11 @@ function openResumePrintWindow(resumeNode: HTMLElement, fileBaseName: string) {
   clonedResume.style.borderRadius = "0"
   clonedResume.style.overflow = "hidden"
 
-  printWindow.document.open()
-  printWindow.document.write(`<!doctype html>
+  return `<!doctype html>
 <html>
   <head>
     <title>${fileBaseName}</title>
+    ${options?.forServer ? `<base href="${window.location.origin}/">` : ""}
     ${styleTags}
     <style>
       @page { size: letter; margin: 0; }
@@ -273,16 +269,28 @@ function openResumePrintWindow(resumeNode: HTMLElement, fileBaseName: string) {
   </head>
   <body>
     ${clonedResume.outerHTML}
-    <script>
+    ${options?.forServer ? "" : `<script>
       window.addEventListener('load', () => {
         setTimeout(() => {
           window.print();
           window.close();
         }, 250);
       });
-    </script>
+    </script>`}
   </body>
-</html>`)
+</html>`
+}
+
+function openResumePrintWindow(resumeNode: HTMLElement, fileBaseName: string) {
+  const printWindow = window.open("", "_blank", "width=980,height=1200")
+
+  if (!printWindow) {
+    toast.error("Please allow popups to export the PDF.")
+    return false
+  }
+
+  printWindow.document.open()
+  printWindow.document.write(buildResumePrintHtml(resumeNode, fileBaseName))
   printWindow.document.close()
   return true
 }
@@ -1108,6 +1116,7 @@ export default function ResumePreviewPage() {
   const resumeContentRef = useRef<HTMLDivElement>(null)
   const [zoom, setZoom] = useState(100)
   const [fitScale, setFitScale] = useState(1)
+  const [isEditMode, setIsEditMode] = useState(false)
   const [generatedResume, setGeneratedResume] = useState<GeneratedResume>(fallbackResume)
   const [selectedTemplateId, setSelectedTemplateId] = useState<TemplateId>(getTemplateId(fallbackResume.template))
 
@@ -1223,15 +1232,38 @@ export default function ResumePreviewPage() {
     }
 
     try {
-      toast.loading("Preparing PDF preview...", { id: "resume-pdf" })
+      toast.loading("Generating PDF...", { id: "resume-pdf" })
       await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)))
+
+      // Preferred path: server renders the exact print HTML to a PDF file.
+      const response = await fetch("/api/render-pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          html: buildResumePrintHtml(resumeNode, fileBaseName, { forServer: true }),
+          fileName: fileBaseName,
+        }),
+      })
+
+      if (response.ok) {
+        downloadBlob(await response.blob(), `${fileBaseName}.pdf`)
+        toast.success("PDF downloaded", { id: "resume-pdf" })
+        return
+      }
+
+      // Fallback: browser print dialog (works without a local Chrome/Edge).
       const didOpenPrintWindow = openResumePrintWindow(resumeNode, fileBaseName)
       if (didOpenPrintWindow) {
         toast.success("Print dialog opened. Choose Save as PDF.", { id: "resume-pdf" })
       }
     } catch (error) {
       console.error("PDF generation failed", error)
-      toast.error("PDF generation failed. Please try again.", { id: "resume-pdf" })
+      const didOpenPrintWindow = openResumePrintWindow(resumeNode, fileBaseName)
+      if (didOpenPrintWindow) {
+        toast.success("Print dialog opened. Choose Save as PDF.", { id: "resume-pdf" })
+      } else {
+        toast.error("PDF generation failed. Please try again.", { id: "resume-pdf" })
+      }
     }
   }
 
@@ -1245,9 +1277,59 @@ export default function ResumePreviewPage() {
     toast.success("Resume copied to clipboard")
   }
 
+  const [coverLetter, setCoverLetter] = useState("")
+  const [coverLetterOpen, setCoverLetterOpen] = useState(false)
+  const [isWritingCoverLetter, setIsWritingCoverLetter] = useState(false)
+
+  const handleGenerateCoverLetter = async () => {
+    setIsWritingCoverLetter(true)
+    toast.loading("Writing cover letter...", { id: "cover-letter" })
+    try {
+      const storedEntries = loadGeneratedResumes()
+      const matchingEntry = storedEntries.find((entry) => entry.resume.generatedAt === generatedResume.generatedAt)
+      const response = await fetch("/api/generate-cover-letter", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          candidateName: `${profile.personalInfo.firstName} ${profile.personalInfo.lastName}`.trim(),
+          candidateEmail: profile.personalInfo.email,
+          candidatePhone: profile.personalInfo.phone,
+          candidateLocation: profile.personalInfo.location,
+          professionalSummary: generatedResume.improvedSummary || generatedResume.summary,
+          resumeText: downloadText,
+          jobTitle: generatedResume.jobTitle,
+          company: generatedResume.company,
+          jobDescription: matchingEntry?.jobDescription || storedEntries[0]?.jobDescription || "",
+        }),
+      })
+      const data = (await response.json()) as { coverLetter?: string; error?: string }
+      if (!response.ok || !data.coverLetter) {
+        throw new Error(data.error || "Cover letter generation failed")
+      }
+      setCoverLetter(data.coverLetter)
+      setCoverLetterOpen(true)
+      toast.success("Cover letter ready", { id: "cover-letter" })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Cover letter generation failed", { id: "cover-letter" })
+    } finally {
+      setIsWritingCoverLetter(false)
+    }
+  }
+
+  const handleDownloadCoverLetter = () => {
+    downloadBlob(new Blob([coverLetter], { type: "text/plain" }), `${fileBaseName}_cover_letter.txt`)
+    toast.success("Cover letter downloaded")
+  }
+
   return (
     <AppLayout title="Resume Preview" subtitle="Review and download your generated resume">
       <div className="max-w-7xl mx-auto">
+        {!generatedResume.modelUsed && (
+          <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/40 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
+            <span className="font-semibold">Basic mode:</span> this resume was built by the local generator because the AI
+            providers were unavailable. Quality is reduced — go back to the builder and regenerate to retry with AI.
+          </div>
+        )}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Resume Document Preview */}
           <div className="lg:col-span-2">
@@ -1294,10 +1376,13 @@ export default function ResumePreviewPage() {
               >
                 <div
                   ref={resumePageRef}
+                  contentEditable={isEditMode}
+                  suppressContentEditableWarning
                   className={cn(
                     "resume-print-page",
                     resumeTemplate.body,
-                    isCompact ? "px-6 py-5" : isUniversityLaw ? "px-9 py-7" : isOriginalCv ? "px-10 py-5" : "px-7 py-6"
+                    isCompact ? "px-6 py-5" : isUniversityLaw ? "px-9 py-7" : isOriginalCv ? "px-10 py-5" : "px-7 py-6",
+                    isEditMode && "outline outline-2 outline-dashed outline-primary/50 cursor-text"
                   )}
                   style={{
                     width: `${RESUME_PAGE_WIDTH}px`,
@@ -1620,9 +1705,30 @@ export default function ResumePreviewPage() {
                 <Copy className="h-4 w-4" />
                 Copy Resume
               </Button>
-              <Button variant="outline" className="w-full gap-2">
+              <Button
+                variant="outline"
+                className="w-full gap-2"
+                onClick={handleGenerateCoverLetter}
+                disabled={isWritingCoverLetter}
+              >
+                {isWritingCoverLetter ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+                {isWritingCoverLetter ? "Writing..." : "Generate Cover Letter"}
+              </Button>
+              <Button
+                variant={isEditMode ? "default" : "outline"}
+                className="w-full gap-2"
+                onClick={() => {
+                  const next = !isEditMode
+                  setIsEditMode(next)
+                  if (next) {
+                    toast.info("Edit mode on — click any text in the preview to edit it. Edits are included in the PDF download.", { duration: 6000 })
+                  } else {
+                    toast.success("Edit mode off")
+                  }
+                }}
+              >
                 <Edit className="h-4 w-4" />
-                Edit Resume
+                {isEditMode ? "Done Editing" : "Edit Resume"}
               </Button>
               <Button variant="ghost" className="w-full gap-2">
                 <ExternalLink className="h-4 w-4" />
@@ -1632,6 +1738,34 @@ export default function ResumePreviewPage() {
           </div>
         </div>
       </div>
+
+      <Dialog open={coverLetterOpen} onOpenChange={setCoverLetterOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Cover Letter</DialogTitle>
+          </DialogHeader>
+          <div className="max-h-[55vh] overflow-y-auto whitespace-pre-wrap rounded-md border border-border bg-muted/30 p-4 text-sm text-foreground">
+            {coverLetter}
+          </div>
+          <div className="flex gap-2 justify-end">
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={async () => {
+                await navigator.clipboard.writeText(coverLetter)
+                toast.success("Cover letter copied")
+              }}
+            >
+              <Copy className="h-4 w-4" />
+              Copy
+            </Button>
+            <Button className="gap-2" onClick={handleDownloadCoverLetter}>
+              <Download className="h-4 w-4" />
+              Download .txt
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </AppLayout>
   )
 }

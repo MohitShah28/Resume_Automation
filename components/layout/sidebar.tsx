@@ -9,6 +9,7 @@ import {
   User,
   FileText,
   Eye,
+  History,
   Settings,
   Menu,
   X,
@@ -22,6 +23,7 @@ const navItems = [
   { href: "/profile", icon: User, label: "Profile Knowledge Base" },
   { href: "/resume-builder", icon: FileText, label: "Resume Builder" },
   { href: "/resume-preview", icon: Eye, label: "Resume Preview" },
+  { href: "/history", icon: History, label: "History" },
   { href: "/settings", icon: Settings, label: "Settings" },
 ]
 

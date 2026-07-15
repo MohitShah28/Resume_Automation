@@ -1,16 +1,20 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { motion } from "framer-motion"
 import {
   User,
   FileText,
   Download,
+  Upload,
   Bell,
   Palette,
   Shield,
-  Save
+  Save,
+  DatabaseBackup
 } from "lucide-react"
+import { loadMasterProfile, saveMasterProfile } from "@/lib/profile-storage"
+import type { ProfileData } from "@/lib/resume-generator"
 import { AppLayout } from "@/components/layout/app-layout"
 import { AnimatedCard } from "@/components/ui/animated-card"
 import { Button } from "@/components/ui/button"
@@ -45,6 +49,37 @@ export default function SettingsPage() {
 
   const handleSave = () => {
     toast.success("Settings saved successfully!")
+  }
+
+  const importInputRef = useRef<HTMLInputElement>(null)
+
+  const handleExportProfile = () => {
+    const profile = loadMasterProfile()
+    const blob = new Blob([JSON.stringify(profile, null, 2)], { type: "application/json" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = `resume-ai-profile-backup-${new Date().toISOString().slice(0, 10)}.json`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+    toast.success("Profile exported")
+  }
+
+  const handleImportProfile = async (file: File) => {
+    try {
+      const parsed = JSON.parse(await file.text()) as ProfileData
+      if (!parsed || typeof parsed !== "object" || !parsed.personalInfo || !Array.isArray(parsed.experience)) {
+        toast.error("Not a valid profile backup file.")
+        return
+      }
+      saveMasterProfile(parsed, "profile_management")
+      toast.success("Profile imported. Reloading...")
+      setTimeout(() => window.location.reload(), 800)
+    } catch {
+      toast.error("Could not read that file as JSON.")
+    }
   }
 
   const activeTheme = mounted ? theme || "light" : "light"
@@ -164,6 +199,46 @@ export default function SettingsPage() {
               </Select>
             </div>
           </div>
+        </AnimatedCard>
+
+        {/* Data Backup */}
+        <AnimatedCard delay={0.25} hover={false}>
+          <div className="flex items-center gap-3 mb-6">
+            <div className="p-2 rounded-lg bg-[#0ea5e9]/10">
+              <DatabaseBackup className="h-5 w-5 text-[#0ea5e9]" />
+            </div>
+            <div>
+              <h2 className="font-semibold text-foreground">Data Backup</h2>
+              <p className="text-sm text-muted-foreground">
+                Your profile lives in this browser only. Export a backup so clearing browser data never loses it.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3">
+            <Button variant="outline" className="gap-2" onClick={handleExportProfile}>
+              <Download className="h-4 w-4" />
+              Export Profile (JSON)
+            </Button>
+            <Button variant="outline" className="gap-2" onClick={() => importInputRef.current?.click()}>
+              <Upload className="h-4 w-4" />
+              Import Profile Backup
+            </Button>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0]
+                if (file) handleImportProfile(file)
+                event.target.value = ""
+              }}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground mt-3">
+            Importing replaces your current profile with the backup.
+          </p>
         </AnimatedCard>
 
         {/* Notifications */}

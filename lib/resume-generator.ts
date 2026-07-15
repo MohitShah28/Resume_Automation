@@ -420,6 +420,19 @@ function tailorProjectHighlights(project: ProfileData["projects"][number], keywo
   ]).slice(0, targetCount)
 }
 
+// Deterministic ATS score: percentage of job keywords actually present in the
+// final resume text, mapped to a 40-98 range. Reproducible — not an LLM guess.
+export function scoreResumeAgainstJob(resumeText: string, jobDescription: string) {
+  const keywords = extractKeywords(jobDescription)
+  if (!keywords.length) {
+    return { atsScore: 70, matchedKeywords: [] as string[], missingKeywords: [] as string[] }
+  }
+  const matchedKeywords = keywords.filter((keyword) => includesTerm(resumeText, keyword))
+  const missingKeywords = keywords.filter((keyword) => !includesTerm(resumeText, keyword))
+  const atsScore = Math.round(40 + 58 * (matchedKeywords.length / keywords.length))
+  return { atsScore, matchedKeywords, missingKeywords }
+}
+
 export function formatResumeText(resume: Omit<GeneratedResume, "resume">) {
   const profile = resume.profile
   const skills = resume.tailoredSkills.length ? resume.tailoredSkills : [
@@ -675,8 +688,14 @@ export function generateResumeFromJob({
     generatedAt: new Date().toISOString(),
   }
 
+  const resumeText = formatResumeText(generatedWithoutText)
+  const deterministicScore = scoreResumeAgainstJob(resumeText, jobDescription)
+
   return {
     ...generatedWithoutText,
-    resume: formatResumeText(generatedWithoutText),
+    atsScore: deterministicScore.atsScore,
+    matchedKeywords: deterministicScore.matchedKeywords,
+    missingKeywords: deterministicScore.missingKeywords,
+    resume: resumeText,
   }
 }

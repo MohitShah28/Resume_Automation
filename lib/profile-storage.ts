@@ -14,6 +14,8 @@ export type StoredGeneratedResume = {
   label: string
   resume: GeneratedResume
   createdAt: string
+  jobDescription?: string
+  generationWarning?: string
 }
 
 function cloneProfile(profile: ProfileData): ProfileData {
@@ -68,17 +70,41 @@ export function saveMasterProfile(profile: ProfileData, source: ProfileSaveSourc
   window.localStorage.setItem(MASTER_PROFILE_VERSION_KEY, PROFILE_KNOWLEDGE_BASE_VERSION)
 }
 
-export function saveGeneratedResume(resume: GeneratedResume) {
+const MAX_STORED_RESUMES = 30
+
+export function saveGeneratedResume(
+  resume: GeneratedResume,
+  options?: { jobDescription?: string; generationWarning?: string }
+) {
   const storedResume: StoredGeneratedResume = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    label: `${resume.jobTitle} Resume`,
+    label: [resume.jobTitle, resume.company !== "Target Company" ? resume.company : ""].filter(Boolean).join(" @ ") || "Resume",
     resume,
     createdAt: new Date().toISOString(),
+    jobDescription: options?.jobDescription,
+    generationWarning: options?.generationWarning,
   }
   const generatedResumes = readJson<StoredGeneratedResume[]>(GENERATED_RESUMES_KEY) || []
 
   window.localStorage.setItem(LATEST_GENERATED_RESUME_KEY, JSON.stringify(resume))
-  window.localStorage.setItem(GENERATED_RESUMES_KEY, JSON.stringify([storedResume, ...generatedResumes]))
+  window.localStorage.setItem(
+    GENERATED_RESUMES_KEY,
+    JSON.stringify([storedResume, ...generatedResumes].slice(0, MAX_STORED_RESUMES))
+  )
+}
+
+export function loadGeneratedResumes(): StoredGeneratedResume[] {
+  return readJson<StoredGeneratedResume[]>(GENERATED_RESUMES_KEY) || []
+}
+
+export function deleteGeneratedResume(id: string) {
+  const remaining = loadGeneratedResumes().filter((entry) => entry.id !== id)
+  window.localStorage.setItem(GENERATED_RESUMES_KEY, JSON.stringify(remaining))
+  return remaining
+}
+
+export function openGeneratedResume(resume: GeneratedResume) {
+  window.localStorage.setItem(LATEST_GENERATED_RESUME_KEY, JSON.stringify(resume))
 }
 
 export function loadLatestGeneratedResume() {

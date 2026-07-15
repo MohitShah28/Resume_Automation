@@ -136,10 +136,16 @@ export default function ResumeBuilderPage() {
         })
       )
 
-      saveGeneratedResume(result.resume)
+      saveGeneratedResume(result.resume, {
+        jobDescription,
+        generationWarning: result.source === "local" ? result.warning || "AI providers unavailable — used basic local generator." : undefined,
+      })
 
       if (result.source === "local") {
-        toast.warning(result.warning || "Using local generator because Groq is not configured.")
+        toast.error(
+          "AI was unavailable, so this resume used the basic local generator. Quality is reduced — regenerate in a minute to retry AI.",
+          { duration: 10000 }
+        )
       }
 
       for (let step = 4; step <= generationSteps.length; step += 1) {

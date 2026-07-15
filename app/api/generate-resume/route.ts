@@ -1,7 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk"
 import Groq from "groq-sdk"
+import { parseJsonWithRepair } from "@/lib/json-repair"
 import { NextResponse } from "next/server"
-import { appendFile, mkdir } from "node:fs/promises"
+import { appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import path from "node:path"
 import {
   GenerateResumePayload,
@@ -10,6 +11,7 @@ import {
   formatResumeText,
   generateResumeFromJob,
   payloadToProfile,
+  scoreResumeAgainstJob,
   sortExperienceByRecency,
 } from "@/lib/resume-generator"
 
@@ -258,89 +260,8 @@ ${truncateText(payload.jobDescription)}
 `
 }
 
-function extractJsonObject(content: string) {
-  const trimmed = content.trim()
-  if (trimmed.startsWith("{") && trimmed.endsWith("}")) return trimmed
-
-  const firstBrace = trimmed.indexOf("{")
-  const lastBrace = trimmed.lastIndexOf("}")
-  if (firstBrace >= 0 && lastBrace > firstBrace) {
-    return trimmed.slice(firstBrace, lastBrace + 1)
-  }
-
-  return "{}"
-}
-
-// Scans from the first "{" and returns the substring up to the matching top-level
-// close. If the JSON is truncated mid-stream, drops the trailing partial token and
-// appends the closers needed to make it parseable, so a mostly-complete LLM
-// response is salvaged instead of silently replaced by the local fallback.
-function balanceJson(text: string) {
-  let inString = false
-  let escape = false
-  const stack: string[] = []
-
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index]
-    if (escape) {
-      escape = false
-      continue
-    }
-    if (char === "\\") {
-      escape = inString
-      continue
-    }
-    if (char === '"') {
-      inString = !inString
-      continue
-    }
-    if (inString) continue
-    if (char === "{" || char === "[") stack.push(char)
-    else if (char === "}" || char === "]") {
-      stack.pop()
-      if (stack.length === 0) return text.slice(0, index + 1)
-    }
-  }
-
-  let repaired = inString ? `${text}"` : text
-  repaired = repaired.replace(/,\s*"[^"]*"?\s*:?\s*$/, "").replace(/[,:]\s*$/, "")
-  return repaired + stack.reverse().map((char) => (char === "{" ? "}" : "]")).join("")
-}
-
-function repairJson(value: string) {
-  const start = value.indexOf("{")
-  if (start < 0) return "{}"
-  const text = value.slice(start)
-  let cut = text.length
-
-  for (let attempt = 0; attempt < 40 && cut > 1; attempt += 1) {
-    const candidate = balanceJson(text.slice(0, cut))
-    try {
-      JSON.parse(candidate)
-      return candidate
-    } catch {
-      cut = Math.max(
-        text.lastIndexOf(",", cut - 2),
-        text.lastIndexOf("}", cut - 2),
-        text.lastIndexOf("]", cut - 2),
-        text.lastIndexOf('"', cut - 2)
-      )
-    }
-  }
-
-  return "{}"
-}
-
 function parseGroqJson(content: string) {
-  try {
-    return JSON.parse(extractJsonObject(content)) as Partial<GeneratedResume>
-  } catch {
-    try {
-      return JSON.parse(repairJson(content)) as Partial<GeneratedResume>
-    } catch {
-      return {}
-    }
-  }
+  return parseJsonWithRepair<GeneratedResume>(content)
 }
 
 function parseJsonContent(content: string) {
@@ -448,7 +369,7 @@ function normalizeExperience(value: Partial<GeneratedResume>["selectedExperience
   return sortExperienceByRecency(normalized)
 }
 
-function normalizeGroqResume(value: Partial<GeneratedResume>, fallback: GeneratedResume, modelUsed: string): GeneratedResume {
+function normalizeGroqResume(value: Partial<GeneratedResume>, fallback: GeneratedResume, modelUsed: string, jobDescription: string): GeneratedResume {
   const isDenseOnePage = fallback.template === "original-cv" || fallback.template === "university-law"
   const hasSupplementalSections = fallback.profile.certifications.length > 0 || fallback.profile.achievements.length > 0
 
@@ -476,9 +397,15 @@ function normalizeGroqResume(value: Partial<GeneratedResume>, fallback: Generate
     generatedAt: new Date().toISOString(),
   }
 
+  const resumeText = formatResumeText(normalizedResume)
+  // Deterministic ATS score computed from the final resume text, replacing the
+  // model's self-reported guess.
+  const deterministicScore = scoreResumeAgainstJob(resumeText, jobDescription)
+
   return {
     ...normalizedResume,
-    resume: formatResumeText(normalizedResume),
+    ...deterministicScore,
+    resume: resumeText,
   }
 }
 
@@ -666,7 +593,7 @@ async function requestClaudeResume({
   })
 
   return {
-    resume: normalizeGroqResume(parsed, fallback, model),
+    resume: normalizeGroqResume(parsed, fallback, model, payload.jobDescription),
     tokenUsage,
   }
 }
@@ -769,14 +696,27 @@ async function requestGeminiResume({
   })
 
   return {
-    resume: normalizeGroqResume(parsed, fallback, model),
+    resume: normalizeGroqResume(parsed, fallback, model, payload.jobDescription),
     tokenUsage,
   }
 }
 
+const MAX_LOG_BYTES = 5 * 1024 * 1024
+
 async function appendJsonLine(filePath: string, value: unknown) {
   await mkdir(path.dirname(filePath), { recursive: true })
   await appendFile(filePath, `${JSON.stringify(value)}\n`, "utf8")
+
+  // Cap log growth: when a file passes 5MB, keep only the newest half.
+  try {
+    const stats = await stat(filePath)
+    if (stats.size > MAX_LOG_BYTES) {
+      const lines = (await readFile(filePath, "utf8")).trimEnd().split("\n")
+      await writeFile(filePath, `${lines.slice(Math.ceil(lines.length / 2)).join("\n")}\n`, "utf8")
+    }
+  } catch (error) {
+    console.warn("[resume-generation] log rotation failed", error)
+  }
 }
 
 async function saveGenerationRunLog({
@@ -967,7 +907,7 @@ export async function POST(request: Request) {
             rawContent: content,
             parsedJson: parsed,
           })
-          const resume = normalizeGroqResume(parsed, fallback, groqModel)
+          const resume = normalizeGroqResume(parsed, fallback, groqModel, payload.jobDescription)
 
           return NextResponse.json({
             resume,
